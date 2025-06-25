@@ -1,0 +1,27 @@
+{
+  "canisters": {
+    "my_rust_dapp_backend": {
+      "candid": "src/my_rust_dapp_backend/my_rust_dapp_backend.did",
+      "package": "my_rust_dapp_backend",
+      "type": "rust"
+    },
+    "my_rust_dapp_frontend": {
+      "dependencies": [
+        "my_rust_dapp_backend"
+      ],
+      "source": [
+        "src/my_rust_dapp_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "my_rust_dapp_frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
