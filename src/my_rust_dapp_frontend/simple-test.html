@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Test</title>
+</head>
+<body>
+    <h1>Simple Test</h1>
+    <div id="output">Testing...</div>
+    
+    <script type="module">
+        const output = document.getElementById('output');
+        
+        try {
+            output.innerHTML = '<p>✅ Basic JavaScript is working</p>';
+            
+            // Test Oisy wallet detection
+            const oisyAvailable = typeof window !== 'undefined' && 
+                                 window.oisy !== undefined && 
+                                 typeof window.oisy === 'object';
+            
+            output.innerHTML += `<p>Oisy wallet available: ${oisyAvailable ? 'Yes' : 'No'}</p>`;
+            
+            if (!oisyAvailable) {
+                output.innerHTML += `
+                    <div style="background: #f0f0f0; padding: 20px; border-radius: 10px; margin: 20px 0;">
+                        <h3>🚀 Install Oisy Wallet</h3>
+                        <p>Oisy is a modern wallet designed specifically for Internet Computer.</p>
+                        <a href="https://oisy.com" target="_blank" style="display: inline-block; padding: 10px 20px; background: #667eea; color: white; text-decoration: none; border-radius: 5px;">Install Oisy Wallet</a>
+                    </div>
+                `;
+            }
+            
+        } catch (error) {
+            output.innerHTML = `<p>❌ Error: ${error.message}</p>`;
+        }
+    </script>
+</body>
+</html> 

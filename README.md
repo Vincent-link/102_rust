@@ -1,61 +1,209 @@
-# `my_rust_dapp`
+# Virtual BTC Lottery DApp
 
-Welcome to your new `my_rust_dapp` project and to the Internet Computer development community. By default, creating a new project adds this README and some template files to your project directory. You can edit these template files to customize your project and to include your own code to speed up the development cycle.
+This is a decentralized application built on the Internet Computer (IC) for a virtual BTC lottery. Users can connect via Internet Identity wallet, deposit virtual BTC, participate in lottery games, and have a chance to win prizes from the prize pool.
 
-To get started, you might want to explore the project directory structure and the default configuration file. Working with this project in your development environment will not affect any production deployment or identity tokens.
+## Features
 
-To learn more before you start working with `my_rust_dapp`, see the following documentation available online:
+### User Features
+- 🔐 **Internet Identity Wallet Connection** - Secure authentication
+- 👤 **User Registration** - Create personal account
+- 💰 **Virtual Deposit** - Deposit virtual BTC to account
+- 🎯 **Lottery Betting** - Participate in lottery games (1 BTC per bet)
+- 🏆 **Prize Winning** - Win prizes from the prize pool
+- 📊 **Transaction History** - View deposit and winning records
 
-- [Quick Start](https://internetcomputer.org/docs/current/developer-docs/setup/deploy-locally)
-- [SDK Developer Tools](https://internetcomputer.org/docs/current/developer-docs/setup/install)
-- [Rust Canister Development Guide](https://internetcomputer.org/docs/current/developer-docs/backend/rust/)
-- [ic-cdk](https://docs.rs/ic-cdk)
-- [ic-cdk-macros](https://docs.rs/ic-cdk-macros)
-- [Candid Introduction](https://internetcomputer.org/docs/current/developer-docs/backend/candid/)
+### Admin Features
+- 👑 **Admin Authentication** - Initialize admin privileges
+- 🎲 **Manual Draw** - Trigger lottery draws manually
+- 📈 **System Statistics** - View overall system statistics
 
-If you want to start working on your project right away, you might want to try the following commands:
+## Technology Stack
 
-```bash
-cd my_rust_dapp/
-dfx help
-dfx canister --help
+### Backend
+- **Rust** - Core canister logic
+- **Internet Computer** - Decentralized platform
+- **Candid** - Interface definition language
+- **DFX** - Development framework
+
+### Frontend
+- **JavaScript** - Main application logic
+- **Lit-HTML** - Template rendering
+- **SCSS** - Styling
+- **Vite** - Build tool
+
+## Project Structure
+
+```
+my_rust_dapp/
+├── src/
+│   ├── my_rust_dapp_backend/     # Rust canister backend
+│   │   ├── src/
+│   │   │   └── lib.rs           # Main canister logic
+│   │   └── my_rust_dapp_backend.did  # Candid interface
+│   └── my_rust_dapp_frontend/    # JavaScript frontend
+│       ├── src/
+│       │   ├── App.js           # Main application
+│       │   ├── wallet-utils.js  # Wallet utilities
+│       │   └── index.scss       # Styles
+│       └── index.html           # Entry point
+├── dfx.json                      # DFX configuration
+└── Cargo.toml                    # Rust dependencies
 ```
 
-## Running the project locally
+## Getting Started
 
-If you want to test your project locally, you can use the following commands:
+### Prerequisites
+- Node.js (v16 or higher)
+- DFX (Internet Computer development kit)
+- Rust toolchain
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd my_rust_dapp
+   ```
+
+2. **Install dependencies**
+   ```bash
+   # Install frontend dependencies
+   cd src/my_rust_dapp_frontend
+   npm install
+   
+   # Return to root directory
+   cd ../..
+   ```
+
+3. **Start local network**
+   ```bash
+   dfx start --background
+   ```
+
+4. **Deploy canisters**
+   ```bash
+   dfx deploy
+   ```
+
+5. **Generate declarations**
+   ```bash
+   dfx generate
+   ```
+
+6. **Build frontend**
+   ```bash
+   cd src/my_rust_dapp_frontend
+   npm run build
+   ```
+
+7. **Start frontend**
+   ```bash
+   npm run dev
+   ```
+
+### Access the Application
+
+- **Frontend**: http://localhost:5173
+- **Canister ID**: Check `dfx.json` or run `dfx canister id my_rust_dapp_backend`
+
+## Usage
+
+### For Users
+
+1. **Connect Wallet**
+   - Open the application in your browser
+   - Click "Connect Wallet" and choose your preferred wallet
+   - Complete the authentication process
+
+2. **Create Account**
+   - After connecting, click "Create User" to register
+   - Your account will be created on the blockchain
+
+3. **Deposit Funds**
+   - Enter the amount of virtual BTC you want to deposit
+   - Click "Deposit" to add funds to your account
+
+4. **Place Bets**
+   - Click "Place Bet" to participate in the current round
+   - Each bet costs 1 BTC from your balance
+
+5. **Win Prizes**
+   - If you win, prizes will be automatically added to your balance
+   - Check your transaction history for details
+
+### For Admins
+
+1. **Initialize Admin**
+   - Connect your wallet
+   - Click "Initialize Admin Privileges"
+   - You'll become the admin of the system
+
+2. **Manual Draw**
+   - As admin, you can trigger manual draws
+   - Click "Manual Draw" to end the current round and select a winner
+
+## Development
+
+### Backend Development
+
+The backend is written in Rust and runs on the Internet Computer. Key files:
+
+- `src/my_rust_dapp_backend/src/lib.rs` - Main canister logic
+- `src/my_rust_dapp_backend/my_rust_dapp_backend.did` - Candid interface
+
+### Frontend Development
+
+The frontend uses JavaScript with Lit-HTML for rendering. Key files:
+
+- `src/my_rust_dapp_frontend/src/App.js` - Main application logic
+- `src/my_rust_dapp_frontend/src/wallet-utils.js` - Wallet integration utilities
+- `src/my_rust_dapp_frontend/src/index.scss` - Application styles
+
+### Testing
 
 ```bash
-# Starts the replica, running in the background
-dfx start --background
+# Test backend
+dfx test
 
-# Deploys your canisters to the replica and generates your candid interface
+# Test frontend
+cd src/my_rust_dapp_frontend
+npm test
+```
+
+## Deployment
+
+### Local Development
+```bash
+dfx start --background
 dfx deploy
 ```
 
-Once the job completes, your application will be available at `http://localhost:4943?canisterId={asset_canister_id}`.
-
-If you have made changes to your backend canister, you can generate a new candid interface with
-
+### Production Deployment
 ```bash
-npm run generate
+dfx deploy --network ic
 ```
 
-at any time. This is recommended before starting the frontend development server, and will be run automatically any time you run `dfx deploy`.
+## Contributing
 
-If you are making frontend changes, you can start a development server with
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-```bash
-npm start
-```
+## License
 
-Which will start a server at `http://localhost:8080`, proxying API requests to the replica at port 4943.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-### Note on frontend environment variables
+## Support
 
-If you are hosting frontend code somewhere without using DFX, you may need to make one of the following adjustments to ensure your project does not fetch the root key in production:
+For support and questions:
+- Create an issue in the repository
+- Check the documentation
+- Review the troubleshooting guide
 
-- set`DFX_NETWORK` to `ic` if you are using Webpack
-- use your own preferred method to replace `process.env.DFX_NETWORK` in the autogenerated declarations
-  - Setting `canisters -> {asset_canister_id} -> declarations -> env_override to a string` in `dfx.json` will replace `process.env.DFX_NETWORK` with the string in the autogenerated declarations
-- Write your own `createActor` constructor
+## Acknowledgments
+
+- DFINITY Foundation for the Internet Computer platform
+- The IC community for tools and libraries
+- Contributors and testers

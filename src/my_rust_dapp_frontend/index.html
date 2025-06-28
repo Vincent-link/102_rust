@@ -3,18 +3,43 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IC Hello Starter</title>
+  <title>Virtual BTC Lottery - Internet Computer DApp</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .loading {
+      text-align: center;
+      color: white;
+    }
+    .error {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 20px;
+      border-radius: 10px;
+      max-width: 500px;
+      text-align: center;
+    }
+  </style>
 </head>
 
 <body>
-  <div class="browser-warning">
-    ⚠️ If this page appears broken, try reloading. If the problem persists, try switching browsers; Chrome or
-    Firefox are recommended.
+  <div id="app">
+    <div class="loading">
+      <h2>Loading Virtual BTC Lottery...</h2>
+      <p>Please wait while the application loads.</p>
+    </div>
   </div>
-  <div id="root"></div>
-  <script type="module" src="/src/main.js"></script>
+  
+  <script type="module" src="/src/App.js"></script>
 </body>
 
 </html>

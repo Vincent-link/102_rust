@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oisy Wallet Test</title>
+</head>
+<body>
+    <h1>Oisy Wallet Test</h1>
+    <div id="status">Checking wallet availability...</div>
+    
+    <script type="module">
+        import { isOisyAvailable, createOisyWallet } from './src/oisy-wallet.js';
+        
+        const statusDiv = document.getElementById('status');
+        
+        try {
+            const available = isOisyAvailable();
+            console.log('Oisy available:', available);
+            
+            if (available) {
+                statusDiv.innerHTML = `
+                    <h2>✅ Oisy Wallet Available</h2>
+                    <p>Oisy wallet is installed and ready to use!</p>
+                    <button onclick="connectWallet()">Connect Wallet</button>
+                `;
+            } else {
+                statusDiv.innerHTML = `
+                    <h2>❌ Oisy Wallet Not Available</h2>
+                    <p>Please install Oisy wallet from <a href="https://oisy.com" target="_blank">https://oisy.com</a></p>
+                    <h3>Installation Steps:</h3>
+                    <ol>
+                        <li>Visit https://oisy.com</li>
+                        <li>Click "Install Extension"</li>
+                        <li>Add the extension to your browser</li>
+                        <li>Create or import your wallet</li>
+                        <li>Refresh this page</li>
+                    </ol>
+                `;
+            }
+        } catch (error) {
+            console.error('Error checking Oisy wallet:', error);
+            statusDiv.innerHTML = `
+                <h2>⚠️ Error</h2>
+                <p>Error checking wallet: ${error.message}</p>
+            `;
+        }
+        
+        window.connectWallet = async function() {
+            try {
+                const wallet = createOisyWallet();
+                const result = await wallet.connect();
+                
+                if (result.success) {
+                    statusDiv.innerHTML = `
+                        <h2>✅ Connected!</h2>
+                        <p>Principal: ${result.principal}</p>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <h2>❌ Connection Failed</h2>
+                        <p>Error: ${result.error}</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Connection error:', error);
+                statusDiv.innerHTML = `
+                    <h2>⚠️ Connection Error</h2>
+                    <p>Error: ${error.message}</p>
+                `;
+            }
+        };
+    </script>
+</body>
+</html> 

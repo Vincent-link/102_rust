@@ -1,3 +1,45 @@
+type Transaction = record {
+    amount : nat64;
+    timestamp : nat64;
+    transaction_type : text;
+};
+
+type Winning = record {
+    amount : nat64;
+    timestamp : nat64;
+    round_id : nat64;
+};
+
+type User = record {
+    balance : nat64;
+    transaction_history : vec Transaction;
+    winning_history : vec Winning;
+};
+
+type Round = record {
+    id : nat64;
+    participants : vec principal;
+    prize_pool : nat64;
+    start_time : nat64;
+    end_time : nat64;
+    winners : vec principal;
+};
+
+type SystemStats = record {
+    total_rounds : nat64;
+    total_bets : nat64;
+    total_winnings : nat64;
+    active_users : nat64;
+};
+
 service : {
-    "greet": (text) -> (text) query;
+    "initialize_auth" : () -> ();
+    "create_user" : () -> ();
+    "deposit" : (nat64) -> ();
+    "place_bet" : (text) -> ();
+    "trigger_draw" : () -> ();
+    "get_user" : (principal) -> (opt User) query;
+    "get_round" : () -> (Round) query;
+    "get_stats" : () -> (SystemStats) query;
+    "get_canister_address" : () -> (text) query;
 }
