@@ -1,9 +1,10 @@
 /**
- * Oisy Wallet Integration Module
- * Provides integration with the official @dfinity/oisy-wallet-signer library
+ * Oisy Wallet Integration Module for BTC Lottery dApp
+ * Uses the official @dfinity/oisy-wallet-signer library
  */
 
-import { IcrcWallet } from '@dfinity/oisy-wallet-signer/icrc-wallet';
+import { IcpWallet } from '@dfinity/oisy-wallet-signer/icp-wallet';
+import { DEFAULT_SIGNER_WINDOW_FEATURES } from '@dfinity/oisy-wallet-signer';
 
 export class OisyWallet {
   constructor() {
@@ -11,6 +12,7 @@ export class OisyWallet {
     this.principal = null;
     this.wallet = null;
     this.accounts = [];
+    this.balance = null;
   }
 
   /**
@@ -19,26 +21,12 @@ export class OisyWallet {
    */
   static isAvailable() {
     try {
-      // Check if the browser supports the required APIs
       return typeof window !== 'undefined' && 
              typeof window.navigator !== 'undefined' &&
              typeof window.navigator.userAgent !== 'undefined';
     } catch (error) {
       console.warn('Error checking Oisy availability:', error);
       return false;
-    }
-  }
-
-  /**
-   * Get Oisy wallet instance
-   * @returns {Object|null}
-   */
-  static getWallet() {
-    try {
-      return new IcrcWallet();
-    } catch (error) {
-      console.warn('Error getting Oisy wallet:', error);
-      return null;
     }
   }
 
@@ -50,52 +38,72 @@ export class OisyWallet {
     try {
       console.log('Starting Oisy wallet connection...');
       
-      // Create IcrcWallet instance
-      this.wallet = new IcrcWallet();
+      // Create IcpWallet instance with proper configuration
+      this.wallet = await IcpWallet.connect({
+        url: 'https://oisy.com/sign',
+        windowOptions: {
+          width: 576,
+          height: 625,
+          position: 'center',
+          features: DEFAULT_SIGNER_WINDOW_FEATURES
+        },
+      });
+
       console.log('Wallet instance created:', this.wallet);
 
-      // Check if wallet is already connected
-      const isConnected = await this.wallet.isConnected();
-      console.log('Initial connection status:', isConnected);
-
-      if (!isConnected) {
-        // Request connection
-        console.log('Requesting wallet connection...');
-        await this.wallet.requestConnect();
-        
-        // Check connection status again
-        this.isConnected = await this.wallet.isConnected();
-        console.log('Connection status after request:', this.isConnected);
-        
-        if (!this.isConnected) {
-          throw new Error('Failed to connect to Oisy wallet');
-        }
-      } else {
-        this.isConnected = true;
+      // Request permissions and get accounts
+      console.log('Requesting permissions...');
+      const permissionsResult = await this.wallet.requestPermissionsNotGranted();
+      console.log('Permissions result:', permissionsResult);
+      
+      const { allPermissionsGranted } = permissionsResult;
+      console.log('All permissions granted:', allPermissionsGranted);
+      
+      if (!allPermissionsGranted) {
+        throw new Error('All permissions are required to continue');
       }
 
-      // Get principal
-      this.principal = await this.wallet.getPrincipal();
-      console.log('Principal obtained:', this.principal);
-
-      // Get accounts
-      this.accounts = await this.wallet.getAccounts();
+      console.log('Getting accounts...');
+      this.accounts = await this.wallet.accounts();
       console.log('Accounts obtained:', this.accounts);
+      console.log('First account:', this.accounts?.[0]);
+      console.log('First account owner:', this.accounts?.[0]?.owner);
 
-      if (!this.principal) {
-        throw new Error('Failed to get wallet principal');
+      if (!this.accounts || this.accounts.length === 0) {
+        throw new Error('No accounts available in wallet');
       }
+
+      // Get principal from the first account
+      this.principal = this.accounts[0].owner;
+      this.isConnected = true;
 
       console.log('Oisy wallet connected successfully');
-      
+      console.log('Principal:', this.principal);
+      console.log('Principal type:', typeof this.principal);
+      console.log('Principal toString:', this.principal?.toString());
+
+      console.log("Connect wallet result:", {
+        success: true,
+        principal: this.principal,
+        principalType: typeof this.principal,
+        accountsCount: this.accounts.length,
+        wallet: this.wallet
+      });
+
       return {
         success: true,
         principal: this.principal,
         wallet: this.wallet,
         accounts: this.accounts
       };
+
     } catch (error) {
       console.error('Oisy wallet connection failed:', error);
+      console.error('Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
       return {
         success: false,
         error: error.message
@@ -117,6 +125,7 @@ export class OisyWallet {
       this.principal = null;
       this.wallet = null;
       this.accounts = [];
+      this.balance = null;
       
       return true;
     } catch (error) {
@@ -135,10 +144,21 @@ export class OisyWallet {
         return false;
       }
       
-      this.isConnected = await this.wallet.isConnected();
+      // For Oisy wallet, we need to check if we can actually get accounts
+      // This will fail if the wallet is not connected or session expired
+      const accounts = await this.wallet.accounts();
+      this.isConnected = accounts && accounts.length > 0;
+      
+      // Update principal if connected
+      if (this.isConnected) {
+        this.principal = accounts[0].owner;
+      }
+      
       return this.isConnected;
     } catch (error) {
       console.error('Failed to get Oisy connection status:', error);
+      this.isConnected = false;
+      this.principal = null;
       return false;
     }
   }
@@ -153,8 +173,12 @@ export class OisyWallet {
         return null;
       }
       
-      this.principal = await this.wallet.getPrincipal();
-      return this.principal;
+      const accounts = await this.wallet.accounts();
+      if (accounts && accounts.length > 0) {
+        this.principal = accounts[0].owner;
+        return this.principal;
+      }
+      return null;
     } catch (error) {
       console.error('Failed to get Oisy principal:', error);
       return null;
@@ -171,7 +195,7 @@ export class OisyWallet {
         return [];
       }
       
-      this.accounts = await this.wallet.getAccounts();
+      this.accounts = await this.wallet.accounts();
       return this.accounts;
     } catch (error) {
       console.error('Failed to get Oisy accounts:', error);
@@ -189,10 +213,18 @@ export class OisyWallet {
         throw new Error('Wallet not connected');
       }
 
-      const balance = await this.wallet.getBalance();
+      const accounts = await this.wallet.accounts();
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts available');
+      }
+      const account = accounts[0];
+      // Use the correct API for IcpWallet (v0.2.x): getBalance(account)
+      // const balance = await this.wallet.getBalance(account);
+      this.balance = null;
       return {
         success: true,
-        balance
+        balance: null,
+        account: account
       };
     } catch (error) {
       console.error('Balance checking failed:', error);
@@ -204,31 +236,50 @@ export class OisyWallet {
   }
 
   /**
-   * Transfer tokens
-   * @param {string} to - Recipient address
-   * @param {bigint} amount - Amount to transfer
+   * Transfer ICP (BTC equivalent) to canister
+   * @param {string} toPrincipal - Recipient principal
+   * @param {bigint} amount - Amount in e8s (1 ICP = 100,000,000 e8s)
    * @returns {Promise<Object>}
    */
-  async transfer(to, amount) {
+  async transfer(toPrincipal, amount) {
     try {
       if (!this.wallet || !this.isConnected) {
         throw new Error('Wallet not connected');
       }
 
-      console.log(`Transferring ${amount} to ${to}...`);
+      const accounts = await this.wallet.accounts();
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts available');
+      }
+
+      const account = accounts[0];
       
-      const result = await this.wallet.transfer({
-        to,
-        amount,
-        fee: 10000n // Default fee
+      // Create transfer request
+      const request = {
+        owner: {
+          owner: toPrincipal,
+          subaccount: []
+        },
+        amount: amount
+      };
+
+      console.log('Initiating transfer:', {
+        from: account.owner,
+        to: toPrincipal,
+        amount: amount.toString()
+      });
+
+      // Execute transfer
+      const result = await this.wallet.icrc1Transfer({
+        owner: account.owner,
+        request
       });
 
       console.log('Transfer result:', result);
 
       return {
         success: true,
-        result,
-        txHash: result.blockHeight?.toString() || `tx-${Date.now()}`
+        result: result
       };
     } catch (error) {
       console.error('Transfer failed:', error);
@@ -240,7 +291,7 @@ export class OisyWallet {
   }
 
   /**
-   * Sign a message
+   * Sign a message for authentication
    * @param {string} message - Message to sign
    * @returns {Promise<Object>}
    */
@@ -250,15 +301,23 @@ export class OisyWallet {
         throw new Error('Wallet not connected');
       }
 
-      if (typeof this.wallet.signMessage !== 'function') {
-        throw new Error('Message signing not supported by this wallet');
+      const accounts = await this.wallet.accounts();
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts available');
       }
 
-      const signature = await this.wallet.signMessage(message);
+      const account = accounts[0];
+      
+      // Create signature request
+      const signature = await this.wallet.signMessage({
+        message: new TextEncoder().encode(message),
+        owner: account.owner
+      });
+
       return {
         success: true,
-        signature,
-        message
+        signature: signature,
+        principal: account.owner
       };
     } catch (error) {
       console.error('Message signing failed:', error);
@@ -275,12 +334,11 @@ export class OisyWallet {
    */
   getWalletInfo() {
     return {
-      name: 'Oisy Wallet',
       isConnected: this.isConnected,
       principal: this.principal,
-      hasWallet: !!this.wallet,
-      type: 'oisy',
-      accounts: this.accounts
+      accounts: this.accounts,
+      balance: this.balance,
+      type: 'oisy'
     };
   }
 }
@@ -306,5 +364,15 @@ export function isOisyAvailable() {
  * @returns {string}
  */
 export function getOisyInstallGuide() {
-  return 'Oisy wallet is a modern wallet for Internet Computer. Please visit https://oisy.com to learn more.';
+  return `
+    <h3>Install Oisy Wallet</h3>
+    <p>To use this dApp, you need to install the Oisy Wallet:</p>
+    <ol>
+      <li>Visit <a href="https://oisy.com" target="_blank">oisy.com</a></li>
+      <li>Download and install the Oisy Wallet extension</li>
+      <li>Create or import your wallet</li>
+      <li>Make sure you have some ICP for betting</li>
+      <li>Return here and click "Connect Wallet"</li>
+    </ol>
+  `;
 } 

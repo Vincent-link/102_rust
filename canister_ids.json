@@ -1,0 +1,13 @@
+{
+  "internet_identity": {
+    "local": "u3y2e-iq777-77774-qaaaa-cai"
+  },
+  "my_rust_dapp_backend": {
+    "ic": "74ayd-nqaaa-aaaaa-qauyq-cai",
+    "local": "uxrrr-q7777-77774-qaaaq-cai"
+  },
+  "my_rust_dapp_frontend": {
+    "ic": "svnsz-5iaaa-aaaaa-qakxq-cai",
+    "local": "u6s2n-gx777-77774-qaaba-cai"
+  }
+}

@@ -9,11 +9,13 @@
       "dependencies": [
         "my_rust_dapp_backend"
       ],
+      "frontend": {
+        "entrypoint": "src/my_rust_dapp_frontend/index.html"
+      },
       "source": [
         "src/my_rust_dapp_frontend/dist"
       ],
-      "type": "assets",
-      "workspace": "my_rust_dapp_frontend"
+      "type": "assets"
     }
   },
   "defaults": {
