@@ -2,11 +2,7 @@ import { html, render } from 'lit-html';
 import { my_rust_dapp_backend } from 'declarations/my_rust_dapp_backend';
 import { Principal } from '@dfinity/principal';
 import logo from './logo2.svg';
-import { 
-  createOisyWallet, 
-  isOisyAvailable, 
-  getOisyInstallGuide 
-} from './oisy-wallet.js';
+import identityCkBtcManager from './identity-ckbtc.js';
 
 class App {
   constructor() {
@@ -16,33 +12,57 @@ class App {
     this.userPrincipal = null;
     this.isAdmin = false;
     this.depositAmount = '';
+    this.ckbtcAmount = ''; // For ckBTC deposit amount
     this.loading = false;
     this.message = '';
     this.messageType = 'info'; // 'info', 'success', 'error'
-    this.walletType = null; // 'oisy'
+    this.identityProvider = null; // 'internet-identity'
     this.countdown = null; // Countdown
     this.countdownInterval = null; // Countdown timer
+    this.ckbtcBalanceInterval = null; // ckBTC balance check interval
     this.canisterAddress = null;
-    this.walletBalance = null; // Wallet BTC balance
-    this.oisyWallet = null; // Store the wallet instance globally
+
+    this.ckbtcBalance = 0; // User's ckBTC balance
+    this.ckbtcDeposits = []; // User's ckBTC deposits
     this.pageState = 'connect'; // 'connect', 'dashboard', 'loading'
     this.lastCountdown = null; // Store the last countdown value
     this.renderScheduled = false; // Prevent multiple render calls
+    this.txHash = ''; // For recording ckBTC deposits
     
     // Render immediately, then initialize asynchronously
     this.#render();
     this.init();
   }
 
+  // Getter for connection status
+  get isConnected() {
+    return this.userPrincipal && this.userPrincipal !== '2vxsx-fae';
+  }
+
   async init() {
     try {
       console.log('Initializing app...');
       
-      // Try to auto-connect to already connected Oisy wallet
-      console.log('Checking Oisy wallet availability...');
-      const oisyAvailable = isOisyAvailable();
-      console.log('Oisy available:', oisyAvailable);
-      
+      // Check if user is already connected
+      const status = await identityCkBtcManager.getConnectionStatus();
+      if (status.isConnected) {
+        console.log('User already connected, restoring session...');
+        console.log("init principal:",status.principal);
+        this.userPrincipal = status.principal;
+        this.identityProvider = status.provider;
+        
+
+        
+        this.pageState = 'dashboard';
+        
+        // Load user data
+        await this.loadUserData();
+        
+        // await this.loadCkBtcData();
+        
+        // Start ckBTC balance monitoring
+        this.startCkBtcBalanceMonitoring();
+      }
       
       // Load round and stats data (regardless of wallet connection)
       console.log('Loading round data...');
@@ -65,69 +85,47 @@ class App {
     }
   }
 
-
-  async connectWallet() {
+  async connectIdentity() {
     this.loading = true;
     this.pageState = 'loading';
     this.#render();
+    
     try {
-      // Use existing wallet instance if available, otherwise create new one
-      if (!this.oisyWallet) {
-        this.oisyWallet = createOisyWallet();
-      }
-      
-      console.log('Calling oisyWallet.connect()...');
-      const result = await this.oisyWallet.connect();
-      console.log('Connect result received:', result);
-      console.log('Result success:', result.success);
-      console.log('Result principal:', result.principal);
-      console.log('Result error:', result.error);
+      console.log('Connecting to identity...');
+      const result = await identityCkBtcManager.connectWithIdentity();
       
       if (result.success) {
-        console.log('Connection successful, updating state...');
-        // Update state immediately
+        console.log('Identity connection successful:', result);
+        
+        // Update state
         this.userPrincipal = result.principal;
-        this.walletType = 'oisy';
+        this.identityProvider = result.provider;
         
-        console.log('State updated:', {
-          userPrincipal: this.userPrincipal,
-          walletType: this.walletType
-        });
+        // Create user if not exists, then load user data
+        await this.createUserInternal();
+        await this.loadUserData();
         
-        // Load user data and wait for it to complete
-        try {
-          console.log('Loading user data...');
-          await this.loadUserData();
-          console.log('User data loaded successfully');
-        } catch (error) {
-          console.warn('Failed to load user data:', error);
-          // Continue even if user data loading fails
-        }
+        // Load ckBTC data to restore address and balance
+        await this.loadCkBtcData();
+        
+        // Start ckBTC balance monitoring
+        this.startCkBtcBalanceMonitoring();
         
         // Show success message
-        this.showMessage('Oisy wallet connection successful!', 'success');
+        this.showMessage(`${this.getProviderName(result.provider)} connection successful!`, 'success');
         
-        // Update page state to dashboard
+        // Update page state
         this.pageState = 'dashboard';
-        console.log('Page state updated to dashboard');
         
-        // Force a re-render to ensure UI updates
+        // Force re-render
         this.#render();
-        console.log('First render completed');
-        
-        // Add a small delay to ensure state is properly updated
-        setTimeout(() => {
-          console.log('Delayed render...');
-          this.#render();
-        }, 100);
         
       } else {
-        console.error('Connection failed:', result.error);
-        throw new Error(result.error);
+        throw new Error('Connection failed');
       }
     } catch (error) {
-      console.error('ConnectWallet error:', error);
-      this.showMessage('Wallet connection failed: ' + error.message, 'error');
+      console.error('Identity connection failed:', error);
+      this.showMessage('Identity connection failed: ' + error.message, 'error');
       this.pageState = 'connect';
     } finally {
       this.loading = false;
@@ -135,20 +133,48 @@ class App {
     }
   }
 
-  async disconnectWallet() {
+  // Internal method to create user without setting loading state
+  async createUserInternal() {
+    try {
+      console.log('Creating user for principal:', this.userPrincipal);
+      await my_rust_dapp_backend.create_user(this.userPrincipal);
+      console.log('User created successfully');
+      
+      // Verify user was created by trying to get user data
+      const principalObj = Principal.fromText(this.userPrincipal);
+      const user = await my_rust_dapp_backend.get_user(principalObj);
+      if (user) {
+        console.log('User verification successful:', user);
+      } else {
+        console.error('User creation verification failed - user not found');
+        throw new Error('User creation verification failed');
+      }
+    } catch (error) {
+      console.error('Failed to create user:', error);
+      throw error;
+    }
+  }
+
+  async disconnectIdentity() {
     this.loading = true;
     this.#render();
     
     try {
-      await this.oisyWallet.disconnect();
+      await identityCkBtcManager.disconnect();
+      
+      // Stop ckBTC balance monitoring
+      this.stopCkBtcBalanceMonitoring();
       
       this.userPrincipal = null;
       this.currentUser = null;
-      this.walletType = null;
+      this.identityProvider = null;
+
+      this.ckbtcBalance = 0;
+      this.ckbtcDeposits = [];
       this.pageState = 'connect';
-      this.showMessage('Wallet disconnected', 'info');
+      this.showMessage('Identity disconnected', 'info');
     } catch (error) {
-      console.error('Failed to disconnect wallet:', error);
+      console.error('Failed to disconnect identity:', error);
       this.showMessage('Disconnection failed: ' + error.message, 'error');
     } finally {
       this.loading = false;
@@ -156,22 +182,7 @@ class App {
     }
   }
 
-  async createUser() {
-    try {
-      this.loading = true;
-      this.#render();
-      
-      await my_rust_dapp_backend.create_user();
-      await this.loadUserData();
-      this.showMessage('User created successfully!', 'success');
-    } catch (error) {
-      console.error('Failed to create user:', error);
-      this.showMessage('User creation failed: ' + error.message, 'error');
-    } finally {
-      this.loading = false;
-      this.#render();
-    }
-  }
+
 
   async initializeAuth() {
     try {
@@ -200,14 +211,19 @@ class App {
       this.loading = true;
       this.#render();
       
-      // 将BTC转换为最小单位 (1 BTC = 1,000,000 最小单位)
-      const amount = BigInt(Math.floor(parseFloat(this.depositAmount) * 1000000));
+      // Convert to number and ensure it's valid
+      const amount = parseFloat(this.depositAmount);
+      if (isNaN(amount) || amount <= 0) {
+        throw new Error('Invalid deposit amount');
+      }
+      
       await my_rust_dapp_backend.deposit(amount);
+      
       await this.loadUserData();
       this.depositAmount = '';
       this.showMessage('Deposit successful!', 'success');
     } catch (error) {
-      console.error('Deposit failed:', error);
+      console.error('Failed to deposit:', error);
       this.showMessage('Deposit failed: ' + error.message, 'error');
     } finally {
       this.loading = false;
@@ -216,44 +232,43 @@ class App {
   }
 
   async getCanisterAddress() {
-    if (!this.canisterAddress) {
+    try {
       this.canisterAddress = await my_rust_dapp_backend.get_canister_address();
+      return this.canisterAddress;
+    } catch (error) {
+      console.error('Failed to get canister address:', error);
+      throw error;
     }
-    return this.canisterAddress;
   }
 
   async placeBet() {
     try {
+      // Check if user has sufficient balance
+      if (!this.currentUser) {
+        this.showMessage('Please wait for user data to load', 'error');
+        return;
+      }
+
+      console.log('currentUser:', this.currentUser);
+
+      
       this.loading = true;
       this.#render();
-      if (!this.oisyWallet || !this.oisyWallet.isConnected) {
-        throw new Error('Wallet not connected');
-      }
-      if (!this.currentUser || this.currentUser.balance < 1_000_000n) {
-        throw new Error('Insufficient balance. You need at least 1 BTC to place a bet.');
-      }
-      const canisterAddress = await this.getCanisterAddress();
-      const E8S_PER_ICP = 100_000_000n;
-      const ONE_ICP = 1n * E8S_PER_ICP;
-      const transferResult = await this.oisyWallet.transfer(canisterAddress, ONE_ICP);
-      if (!transferResult.success) {
-        throw new Error(`Wallet transfer failed: ${transferResult.error}`);
-      }
-      let txHash;
-      if (transferResult.result && transferResult.result.blockHeight) {
-        txHash = transferResult.result.blockHeight.toString();
-      } else if (transferResult.result && transferResult.result.transfer) {
-        txHash = transferResult.result.transfer.blockHeight?.toString() || `tx-${Date.now()}`;
-      } else {
-        txHash = `tx-${Date.now()}`;
-      }
-      await my_rust_dapp_backend.place_bet(txHash);
-      this.showMessage('Bet placed successfully! Your 1 BTC bet has been submitted.', 'success');
+      
+      // Generate a unique transaction hash for this bet
+      const txHash = `bet_${this.userPrincipal}_${Date.now()}`;
+      
+      console.log('Placing bet with tx_hash:', txHash);
+      await my_rust_dapp_backend.place_bet(this.userPrincipal, txHash);
+      
+      // Reload data to see updated round info
       await this.loadUserData();
       await this.loadRoundData();
-      await this.loadWalletBalance();
+      
+      this.showMessage('Bet placed successfully! You are now participating in the current round.', 'success');
     } catch (error) {
-      this.showMessage(`Bet placement failed: ${error.message}`, 'error');
+      console.error('Failed to place bet:', error);
+      this.showMessage('Bet placement failed: ' + error.message, 'error');
     } finally {
       this.loading = false;
       this.#render();
@@ -266,12 +281,12 @@ class App {
       this.#render();
       
       await my_rust_dapp_backend.trigger_draw();
-      await this.loadUserData();
       await this.loadRoundData();
       await this.loadSystemStats();
+      
       this.showMessage('Draw triggered successfully!', 'success');
     } catch (error) {
-      console.error('Draw trigger failed:', error);
+      console.error('Failed to trigger draw:', error);
       this.showMessage('Draw trigger failed: ' + error.message, 'error');
     } finally {
       this.loading = false;
@@ -280,54 +295,44 @@ class App {
   }
 
   async loadUserData() {
-    if (!this.userPrincipal) return;
     try {
-      // get_user expects a Principal object
-      this.currentUser = await my_rust_dapp_backend.get_user(
-        Principal.fromText(this.userPrincipal.toString())
-      );
-      // If user does not exist, automatically create
-      if (!this.currentUser) {
-        await my_rust_dapp_backend.create_user(); // no arguments
-        this.currentUser = await my_rust_dapp_backend.get_user(
-          Principal.fromText(this.userPrincipal.toString())
-        );
-      }
-      // Also load wallet balance if connected
-      if (this.walletType === 'oisy') {
-        await this.loadWalletBalance();
+      if (this.userPrincipal && this.userPrincipal !== '2vxsx-fae') {
+        const principalObj = Principal.fromText(this.userPrincipal);
+        this.currentUser = await my_rust_dapp_backend.get_user(principalObj);
       }
     } catch (error) {
-      // On error, try to create user and reload
-      try {
-        await my_rust_dapp_backend.create_user();
-        this.currentUser = await my_rust_dapp_backend.get_user(
-          Principal.fromText(this.userPrincipal.toString())
-        );
-        if (this.walletType === 'oisy') {
-          await this.loadWalletBalance();
-        }
-      } catch (createError) {
-        console.error('Failed to create user automatically:', createError);
-      }
+      console.error('Failed to load user data:', error);
     }
   }
 
-  async loadWalletBalance() {
+  async loadCkBtcData() {
     try {
-      if (!this.oisyWallet || !this.oisyWallet.isConnected) {
-        throw new Error('Wallet not connected');
-      }
-      const balanceResult = await this.oisyWallet.getBalance();
-      if (balanceResult.success) {
-        this.walletBalance = balanceResult.balance;
+      console.log('loadCkBtcData called, userPrincipal:', this.userPrincipal);
+      if (this.userPrincipal && this.userPrincipal !== '2vxsx-fae') {
+        // Load ckBTC balance
+        try {
+          console.log('Attempting to load ckBTC balance...');
+          this.ckbtcBalance = await identityCkBtcManager.getUserCkBtcBalance();
+          console.log('CkBTC balance loaded:', this.ckbtcBalance);
+        } catch (error) {
+          console.error('Failed to load ckBTC balance:', error);
+          this.ckbtcBalance = 0;
+        }
+        
+        // Load ckBTC deposits
+        try {
+          console.log('Attempting to load ckBTC deposits...');
+          this.ckbtcDeposits = await identityCkBtcManager.getUserCkBtcDeposits();
+          console.log('CkBTC deposits loaded:', this.ckbtcDeposits.length);
+        } catch (error) {
+          console.error('Failed to load ckBTC deposits:', error);
+          this.ckbtcDeposits = [];
+        }
       } else {
-        this.walletBalance = null;
-        console.error('Failed to load wallet balance:', balanceResult.error);
+        console.log('User not connected or anonymous principal, skipping ckBTC data load');
       }
     } catch (error) {
-      this.walletBalance = null;
-      console.error('Error loading wallet balance:', error);
+      console.error('Failed to load ckBTC data:', error);
     }
   }
 
@@ -350,125 +355,156 @@ class App {
   showMessage(message, type = 'info') {
     this.message = message;
     this.messageType = type;
-    this.#render();
     
-    // Clear existing timeout
-    if (this.messageTimeout) {
-      clearTimeout(this.messageTimeout);
+    // Auto-hide success messages after 5 seconds
+    if (type === 'success') {
+      setTimeout(() => {
+        this.message = '';
+        this.messageType = 'info';
+        this.#render();
+      }, 5000);
     }
     
-    // Set new timeout
-    this.messageTimeout = setTimeout(() => {
-      this.message = '';
-      this.#render();
-    }, 5000);
+    this.#render();
   }
 
   formatBalance(balance) {
-    // Convert BTC to minimum unit (1 BTC = 1,000,000 minimum units)
-    const btcAmount = Number(balance) / 1_000_000;
-    return btcAmount.toFixed(6);
+    // Convert BigInt balance to number for calculation
+    const balanceNumber = typeof balance === 'bigint' ? Number(balance) : Number(balance);
+    return (balanceNumber / 100_000_000).toFixed(8) + ' ckBTC';
   }
 
   formatTimestamp(timestamp) {
-    const date = new Date(Number(timestamp) / 1000000);
-    return date.toLocaleString();
+    // Convert BigInt timestamp to number for Date constructor
+    const timestampNumber = typeof timestamp === 'bigint' ? Number(timestamp) : Number(timestamp);
+    return new Date(timestampNumber / 1_000_000).toLocaleString();
   }
 
-  getWalletName() {
-    switch (this.walletType) {
-      case 'oisy': return 'Oisy';
-      default: return 'Unknown';
+  getProviderName(provider) {
+    if (provider === 'internet-identity') {
+      return 'Internet Identity';
+    } else if (provider === 'local-dev') {
+      return 'Local Development Identity';
     }
+    return provider || 'Unknown';
   }
 
   startCountdown() {
-    // Clear previous timer
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
     }
     
-    // Update countdown
-    this.updateCountdown();
-    
-    // Set timer to update every second, but only update the countdown display
     this.countdownInterval = setInterval(() => {
       this.updateCountdown();
-      // Only re-render if countdown actually changed
-      if (this.countdown !== this.lastCountdown) {
-        this.lastCountdown = this.countdown;
-        this.#render();
-      }
     }, 1000);
   }
 
   updateCountdown() {
     if (!this.currentRound) return;
     
-    const now = Date.now();
-    const endTime = Number(this.currentRound.end_time) / 1000000; // Convert to milliseconds
-    const timeLeft = Math.max(0, endTime - now);
+    const now = Date.now() * 1_000_000; // Convert to nanoseconds
+    const endTime = typeof this.currentRound.end_time === 'bigint' 
+      ? Number(this.currentRound.end_time) 
+      : Number(this.currentRound.end_time);
     
-    if (timeLeft <= 0) {
-      // Round ended, reload data
+    if (now >= endTime) {
+      this.countdown = 'Round ended';
+      // Reload round data to check for new round
       this.loadRoundData();
-      this.loadSystemStats();
-      this.countdown = '00:00';
     } else {
-      // Calculate remaining time
-      const minutes = Math.floor(timeLeft / 60000);
-      const seconds = Math.floor((timeLeft % 60000) / 1000);
-      const newCountdown = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-      
-      // Only update if countdown actually changed
-      if (this.countdown !== newCountdown) {
-        this.countdown = newCountdown;
-      }
+      const remaining = endTime - now;
+      const seconds = Math.floor(remaining / 1_000_000_000);
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      this.countdown = `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    }
+    
+    // Only re-render if countdown changed
+    if (this.countdown !== this.lastCountdown) {
+      this.lastCountdown = this.countdown;
+      this.#render();
     }
   }
 
   getRoundStatus() {
-    if (!this.currentRound) return 'loading';
+    if (!this.currentRound) return 'Loading...';
     
-    const now = Date.now();
-    const endTime = Number(this.currentRound.end_time) / 1000000;
-    const timeLeft = endTime - now;
+    const now = Date.now() * 1_000_000;
+    const endTime = typeof this.currentRound.end_time === 'bigint' 
+      ? Number(this.currentRound.end_time) 
+      : Number(this.currentRound.end_time);
     
-    if (timeLeft <= 0) {
-      return 'ended';
-    } else if (timeLeft <= 60000) { // Last 1 minute
-      return 'ending-soon';
+    if (now >= endTime) {
+      return 'Round ended';
     } else {
-      return 'active';
+      return 'Active';
     }
   }
 
   cleanup() {
-    // Clear countdown timer
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
-      this.countdownInterval = null;
+    }
+    if (this.ckbtcBalanceInterval) {
+      clearInterval(this.ckbtcBalanceInterval);
+    }
+  }
+
+  // Start ckBTC balance monitoring
+  startCkBtcBalanceMonitoring() {
+    if (this.ckbtcBalanceInterval) {
+      clearInterval(this.ckbtcBalanceInterval);
     }
     
-    // Clear message timeout if exists
-    if (this.messageTimeout) {
-      clearTimeout(this.messageTimeout);
-      this.messageTimeout = null;
+    // Check balance every 30 seconds
+    this.ckbtcBalanceInterval = setInterval(async () => {
+      if (this.isConnected) {
+        try {
+          const newBalance = await identityCkBtcManager.getUserCkBtcBalance();
+          if (newBalance !== this.ckbtcBalance) {
+            console.log('CkBTC balance changed:', this.ckbtcBalance, '->', newBalance);
+            this.ckbtcBalance = newBalance;
+            this.#render();
+          }
+        } catch (error) {
+          console.error('Failed to check ckBTC balance:', error);
+        }
+      }
+    }, 30000); // 30 seconds
+  }
+
+  // Stop ckBTC balance monitoring
+  stopCkBtcBalanceMonitoring() {
+    if (this.ckbtcBalanceInterval) {
+      clearInterval(this.ckbtcBalanceInterval);
+      this.ckbtcBalanceInterval = null;
     }
   }
 
   #render() {
-    // Prevent multiple render calls in the same tick
     if (this.renderScheduled) return;
-    
     this.renderScheduled = true;
     requestAnimationFrame(() => {
       this.renderScheduled = false;
       render(html`
         <div class="app-container">
           <header class="header">
-            <img src="${logo}" alt="DFINITY logo" class="logo" />
+            <img src="${logo}" alt="BTC Lottery logo" class="logo" />
             <h1>Virtual BTC Lottery</h1>
+            <div class="header-actions">
+              ${!this.isConnected ? html`
+                <button class="btn btn-login" @click=${this.connectIdentity.bind(this)}>
+                  Login
+                </button>
+              ` : html`
+                <div class="user-info-header">
+                  <span class="principal-id">${this.userPrincipal ? this.userPrincipal.toString() : ''}</span>
+                  <button class="btn btn-logout" @click=${this.disconnectIdentity.bind(this)}>
+                    Logout
+                  </button>
+                </div>
+              `}
+            </div>
           </header>
 
           ${this.message ? html`
@@ -477,209 +513,136 @@ class App {
             </div>
           ` : ''}
 
-          <main class="main-content">
-            ${this.pageState === 'loading' ? html`
-              <div class="loading-section">
-                <h2>Connecting to Wallet...</h2>
-                <p>Please wait while we connect to your wallet.</p>
-                <div class="loading-spinner"></div>
-              </div>
-            ` : this.pageState === 'connect' ? html`
-              <div class="connect-section">
-                <h2>Welcome to the Virtual BTC Lottery</h2>
-                <p>Connect your wallet to start playing</p>
-                
-                <div class="wallet-connect">
-                  <h4>🚀 Ready to Play?</h4>
-                  <p>Click the button below to connect your wallet and start playing the lottery!</p>
-                  
-                  <div class="connect-button">
-                    <button 
-                      @click=${this.connectWallet.bind(this)} 
-                      ?disabled=${this.loading}
-                      class="btn btn-primary"
-                    >
-                      ${this.loading ? 'Connecting...' : 'Connect Wallet & Start Playing'}
-                    </button>
-                  </div>
-                  
-                  <div class="wallet-info">
-                    <h5>About Our Wallet:</h5>
-                    <ul>
-                      <li>🔐 Secure built-in wallet</li>
-                      <li>✍️ No browser extension required</li>
-                      <li>💰 Easy deposit and betting</li>
-                      <li>🎨 Simple and intuitive</li>
-                      <li>⚡ Fast and reliable</li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            ` : ''}
+          <main class="main-content main-flex">
+            <section class="main-left">
+              ${!this.isConnected ? html`
+ 
+              ` : html`
+                <div class="dashboard dashboard-personal">
+                  <h2>Personal Center</h2>
+                  <div class="wallet-details-personal">
+                    <p><strong>Principal:</strong> <span class="principal-id">${this.userPrincipal ? this.userPrincipal.toString() : ''}</span></p>
 
-            <!-- Round information - displayed regardless of wallet connection -->
-            ${this.currentRound ? html`
-              <div class="round-section ${this.getRoundStatus()}">
-                <h3>Current Round</h3>
-                <div class="round-info">
-                  <div class="round-header">
-                    <p><strong>Round ID:</strong> ${this.currentRound.id}</p>
-                    <div class="countdown ${this.getRoundStatus()}">
-                      <span class="countdown-label">Remaining Time:</span>
-                      <span class="countdown-time">${this.countdown || '--:--'}</span>
-                    </div>
-                  </div>
-                  <p><strong>Prize Pool:</strong> ${this.formatBalance(this.currentRound.prize_pool)} BTC</p>
-                  <p><strong>Participants:</strong> ${(this.currentRound.participants || []).length} people</p>
-                  <p><strong>Start Time:</strong> ${this.formatTimestamp(this.currentRound.start_time)}</p>
-                  <p><strong>End Time:</strong> ${this.formatTimestamp(this.currentRound.end_time)}</p>
-                  ${(this.currentRound.winners || []).length > 0 ? html`
-                    <p><strong>Winner:</strong> ${this.currentRound.winners[0].toString()}</p>
-                  ` : ''}
-                  ${this.pageState === 'connect' ? html`
-                    <div class="connect-prompt">
-                      <p>💡 Connect your wallet to participate in the current round!</p>
-                    </div>
-                  ` : ''}
-                </div>
-              </div>
-            ` : ''}
-
-            <!-- System statistics - displayed regardless of wallet connection -->
-            ${this.systemStats ? html`
-              <div class="stats-section">
-                <h3>System Stats</h3>
-                <div class="stats-grid">
-                  <div class="stat-item">
-                    <span class="stat-label">Total Rounds</span>
-                    <span class="stat-value">${this.systemStats.total_rounds}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">Total Bets</span>
-                    <span class="stat-value">${this.systemStats.total_bets}</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">Total Winnings</span>
-                    <span class="stat-value">${this.formatBalance(this.systemStats.total_winnings)} BTC</span>
-                  </div>
-                  <div class="stat-item">
-                    <span class="stat-label">Active Users</span>
-                    <span class="stat-value">${this.systemStats.active_users}</span>
-                  </div>
-                </div>
-              </div>
-            ` : ''}
-
-            ${this.pageState === 'dashboard' ? html`
-              <div class="dashboard">
-                <div class="wallet-info">
-                  <h3>Wallet Information</h3>
-                  <div class="wallet-details">
-                    <p><strong>Wallet Type:</strong> ${this.getWalletName()}</p>
-                    <p><strong>Principal ID:</strong> <span class="principal-id">${this.userPrincipal ? this.userPrincipal.toString() : '-'}</span></p>
-                    ${this.walletBalance !== null ? html`
-                      <p><strong>Wallet Balance:</strong> ${this.formatBalance(this.walletBalance)} BTC</p>
-                    ` : ''}
-                    <button 
-                      @click=${this.disconnectWallet.bind(this)} 
-                      ?disabled=${this.loading}
-                      class="btn btn-outline"
-                    >
-                      ${this.loading ? 'Disconnecting...' : 'Disconnect'}
-                    </button>
-                  </div>
-                </div>
-
-                <div class="user-section">
-                  <h3>User Information</h3>
-                  ${this.currentUser ? html`
-                    <div class="user-info">
-                      <p><strong>Balance:</strong> ${this.formatBalance(this.currentUser.balance)} BTC</p>
-                      <p><strong>Transaction Count:</strong> ${(this.currentUser.transaction_history || []).length}</p>
-                      <p><strong>Winning Count:</strong> ${(this.currentUser.winning_history || []).length}</p>
-                    </div>
-                  ` : html`
-                    <div class="user-info">
-                      <p>User not found or error creating user.</p>
-                    </div>
-                  `}
-                </div>
-
-                ${this.currentUser ? html`
-                  <div class="actions-section">
-                    <h3>Actions</h3>
-                    <div class="action-group">
-                      <div class="deposit-group">
-                        <input 
-                          type="number" 
-                          placeholder="Deposit amount (BTC)" 
-                          .value=${this.depositAmount}
-                          @input=${(e) => this.depositAmount = e.target.value}
-                          step="0.000001"
-                          min="0"
-                          class="input"
-                        />
-                        <button 
-                          @click=${this.deposit.bind(this)} 
-                          ?disabled=${this.loading || !this.depositAmount}
-                          class="btn btn-primary"
-                        >
-                          ${this.loading ? 'Depositing...' : 'Deposit'}
-                        </button>
-                      </div>
-                      
+                    <p><strong>CkBTC Balance:</strong> <span style="color: #38a169; font-weight: bold;">${this.formatBalance(this.ckbtcBalance)}</span></p>
+                    <p><strong>Debug Info:</strong> <span style="font-size: 0.8rem; color: #666;">Balance: ${this.ckbtcBalance}</span></p>
+                    
+                    <div class="admin-actions">
                       <button 
-                        @click=${this.placeBet.bind(this)} 
-                        ?disabled=${this.loading || !this.currentUser || this.currentUser.balance < 1000000n}
-                        class="btn btn-success"
+                        class="btn btn-secondary" 
+                        @click=${this.initializeAuth.bind(this)}
+                        ?disabled=${this.loading}
+                        style="width: 100%; margin-top: 1rem;"
                       >
-                        ${this.loading ? 'Betting...' : 'Place Bet (1 BTC)'}
+                        ${this.loading ? 'Initializing...' : 'Initialize Admin Privileges'}
                       </button>
                     </div>
                   </div>
-                ` : ''}
+                  
 
-                ${this.isAdmin ? html`
-                  <div class="admin-section">
-                    <h3>Admin Actions</h3>
-                    <button 
-                      @click=${this.triggerDraw.bind(this)} 
-                      ?disabled=${this.loading}
-                      class="btn btn-warning"
-                    >
-                      ${this.loading ? 'Drawing...' : 'Manual Draw'}
-                    </button>
+                  <div class="ckbtc-history-personal">
+                    <h3>Deposit History</h3>
+                    ${this.ckbtcDeposits && this.ckbtcDeposits.length > 0 ? html`
+                      <div class="deposit-list-personal">
+                        ${this.ckbtcDeposits.slice(-10).reverse().map(deposit => html`
+                          <div class="deposit-item-personal ${deposit.status}">
+                            <div class="deposit-info-personal">
+                              <span class="deposit-amount">${identityCkBtcManager.formatCkBtcAmount(deposit.amount)} BTC</span>
+                              <span class="deposit-status ${deposit.status}">${deposit.status}</span>
+                            </div>
+                            <div class="deposit-details-personal">
+                              <span class="deposit-hash">${deposit.tx_hash.substring(0, 16)}...</span>
+                              <span class="deposit-time">${this.formatTimestamp(deposit.timestamp)}</span>
+                            </div>
+                          </div>
+                        `)}
+                      </div>
+                    ` : html`<p>No deposit history yet.</p>`}
                   </div>
-                ` : html`
-                  <div class="admin-section">
-                    <h3>Admin</h3>
-                    <button 
-                      @click=${this.initializeAuth.bind(this)} 
-                      ?disabled=${this.loading}
-                      class="btn btn-secondary"
-                    >
-                      ${this.loading ? 'Initializing...' : 'Initialize Admin Privileges'}
-                    </button>
-                  </div>
-                `}
-
-                ${this.currentUser && (this.currentUser.transaction_history || []).length > 0 ? html`
-                  <div class="history-section">
-                    <h3>Transaction History</h3>
-                    <div class="history-list">
-                      ${(this.currentUser.transaction_history || []).slice(-5).reverse().map(tx => html`
-                        <div class="history-item">
-                          <span class="tx-type">${tx.transaction_type}</span>
-                          <span class="tx-amount">${this.formatBalance(tx.amount)} BTC</span>
-                          <span class="tx-time">${this.formatTimestamp(tx.timestamp)}</span>
+                  <div class="bet-history-personal">
+                    <h3>Bet History</h3>
+                    ${this.currentUser && this.currentUser.transaction_history && this.currentUser.transaction_history.length > 0
+                      ? html`
+                        <div class="bet-list-personal">
+                          ${this.currentUser.transaction_history
+                            .filter(tx => tx.transaction_type === "Bet")
+                            .slice(-10).reverse().map(bet => html`
+                              <div class="bet-item-personal">
+                                <div class="bet-info-personal">
+                                  <span class="bet-amount">${identityCkBtcManager.formatCkBtcAmount(bet.amount)} BTC</span>
+                                  <span class="bet-time">${this.formatTimestamp(bet.timestamp)}</span>
+                                  ${bet.tx_hash ? html`<span class="bet-hash">${bet.tx_hash.substring(0, 16)}...</span>` : ''}
+                                </div>
+                              </div>
+                          `)}
                         </div>
-                      `)}
-                    </div>
+                      `
+                      : html`<p>No bet history yet.</p>`
+                    }
                   </div>
-                ` : ''}
+                </div>
+              `}
+            </section>
+            <section class="main-right">
+              <div class="round-section">
+                <h2>Current Round</h2>
+                ${this.currentRound ? html`
+                  <div class="round-info">
+                    <p><strong>Round ID:</strong> ${this.currentRound.id}</p>
+                    <p><strong>Prize Pool:</strong> ${this.formatBalance(this.currentRound.prize_pool)} BTC</p>
+                    <p><strong>Participants:</strong> ${(this.currentRound.participants || []).length} people</p>
+                    <p><strong>Start Time:</strong> ${this.formatTimestamp(this.currentRound.start_time)}</p>
+                    <p><strong>End Time:</strong> ${this.formatTimestamp(this.currentRound.end_time)}</p>
+                    <div class="countdown">
+                      <span class="countdown-label">Remaining Time:</span>
+                      <span class="countdown-time">${this.countdown || '--:--'}</span>
+                    </div>
+                    ${(this.currentRound.winners || []).length > 0 ? html`
+                      <p><strong>Winner:</strong> ${this.currentRound.winners[0].toString()}</p>
+                    ` : ''}
+                    
+                    ${this.isConnected ? html`
+                      <div class="round-actions">
+                        <button 
+                          class="btn btn-primary" 
+                          @click=${this.placeBet.bind(this)}
+                          ?disabled=${this.loading}
+                          style="width: 100%; margin-bottom: 1rem;"
+                        >
+                          ${this.loading ? 'Placing Bet...' : 'Place Bet (0.001 ckBTC)'}
+                        </button>
+                        
+                        ${this.isAdmin ? html`
+                          <button 
+                            class="btn btn-secondary" 
+                            @click=${this.triggerDraw.bind(this)}
+                            ?disabled=${this.loading}
+                            style="width: 100%;"
+                          >
+                            ${this.loading ? 'Triggering Draw...' : 'Trigger Draw (Admin)'}
+                          </button>
+                        ` : ''}
+                      </div>
+                    ` : html`
+                      <p style="color: #666; font-style: italic;">Please login to participate in the lottery</p>
+                    `}
+                  </div>
+                ` : html`<p>Loading round info...</p>`}
               </div>
-            ` : ''}
-          </main>
+              
+              ${this.systemStats ? html`
+                <div class="stats-section">
+                  <h2>System Statistics</h2>
+                  <div class="stats-info">
+                    <p><strong>Total Rounds:</strong> ${this.systemStats.total_rounds}</p>
+                    <p><strong>Total Bets:</strong> ${this.systemStats.total_bets}</p>
+                    <p><strong>Total Winnings:</strong> ${this.formatBalance(this.systemStats.total_winnings)}</p>
+                    <p><strong>Active Users:</strong> ${this.systemStats.active_users}</p>
+                    <p><strong>Total ckBTC Deposits:</strong> ${this.formatBalance(this.systemStats.total_ckbtc_deposits)}</p>
+                  </div>
+                </div>
+              ` : ''}
+            </section>
+      </main>
         </div>
       `, document.getElementById('app'));
     });

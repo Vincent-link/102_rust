@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a6fd8;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { background: #28a745; }
+        .error { background: #dc3545; }
+        .info { background: #17a2b8; }
+    </style>
+</head>
+<body>
+    <h1>🔐 Internet Identity Auth Test</h1>
+    
+    <div class="container">
+        <h2>Authentication Status</h2>
+        <div id="status" class="status info">Initializing...</div>
+        
+        <button id="connectBtn">Connect Internet Identity</button>
+        <button id="disconnectBtn" disabled>Disconnect</button>
+        <button id="testBtn" disabled>Test Backend Call</button>
+    </div>
+    
+    <div class="container">
+        <h2>Connection Info</h2>
+        <div id="info">Not connected</div>
+    </div>
+
+    <script type="module">
+        import { AuthClient } from 'https://unpkg.com/@dfinity/auth-client@1.0.0/lib/index.js';
+        
+        let authClient = null;
+        let isAuthenticated = false;
+        
+        const statusDiv = document.getElementById('status');
+        const infoDiv = document.getElementById('info');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const testBtn = document.getElementById('testBtn');
+        
+        function updateStatus(message, type = 'info') {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        function updateInfo(info) {
+            infoDiv.innerHTML = info;
+        }
+        
+        async function initializeAuth() {
+            try {
+                updateStatus('Initializing AuthClient...', 'info');
+                authClient = await AuthClient.create();
+                updateStatus('AuthClient initialized successfully', 'success');
+                
+                if (authClient.isAuthenticated()) {
+                    isAuthenticated = true;
+                    updateStatus('Already authenticated!', 'success');
+                    updateConnectionInfo();
+                    updateButtons();
+                }
+            } catch (error) {
+                updateStatus(`AuthClient initialization failed: ${error.message}`, 'error');
+            }
+        }
+        
+        function updateConnectionInfo() {
+            if (isAuthenticated && authClient) {
+                const identity = authClient.getIdentity();
+                const principal = identity.getPrincipal().toText();
+                updateInfo(`
+                    <strong>Connected!</strong><br>
+                    Principal: ${principal}<br>
+                    Provider: Internet Identity
+                `);
+            } else {
+                updateInfo('Not connected');
+            }
+        }
+        
+        function updateButtons() {
+            connectBtn.disabled = isAuthenticated;
+            disconnectBtn.disabled = !isAuthenticated;
+            testBtn.disabled = !isAuthenticated;
+        }
+        
+        connectBtn.addEventListener('click', async () => {
+            try {
+                updateStatus('Connecting to Internet Identity...', 'info');
+                
+                return new Promise((resolve, reject) => {
+                    authClient.login({
+                        identityProvider: 'https://identity.ic0.app/',
+                        onSuccess: () => {
+                            isAuthenticated = true;
+                            updateStatus('Successfully connected!', 'success');
+                            updateConnectionInfo();
+                            updateButtons();
+                            resolve();
+                        },
+                        onError: (error) => {
+                            updateStatus(`Connection failed: ${error}`, 'error');
+                            reject(error);
+                        }
+                    });
+                });
+            } catch (error) {
+                updateStatus(`Connection error: ${error.message}`, 'error');
+            }
+        });
+        
+        disconnectBtn.addEventListener('click', async () => {
+            try {
+                await authClient.logout();
+                isAuthenticated = false;
+                updateStatus('Disconnected successfully', 'info');
+                updateConnectionInfo();
+                updateButtons();
+            } catch (error) {
+                updateStatus(`Disconnect error: ${error.message}`, 'error');
+            }
+        });
+        
+        testBtn.addEventListener('click', async () => {
+            try {
+                updateStatus('Testing backend call...', 'info');
+                // This would be a test call to your backend
+                updateStatus('Backend call would work here!', 'success');
+            } catch (error) {
+                updateStatus(`Backend test failed: ${error.message}`, 'error');
+            }
+        });
+        
+        // Initialize on page load
+        initializeAuth();
+    </script>
+</body>
+</html> 

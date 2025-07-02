@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Auth Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: white;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a6fd8;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { background: #28a745; }
+        .error { background: #dc3545; }
+        .info { background: #17a2b8; }
+        .warning { background: #ffc107; color: black; }
+        pre {
+            background: #333;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔐 Simple Internet Identity Test</h1>
+    
+    <div class="container">
+        <h2>Step 1: Check Environment</h2>
+        <div id="envStatus" class="status info">Checking environment...</div>
+        <button id="checkEnvBtn">Check Environment</button>
+    </div>
+    
+    <div class="container">
+        <h2>Step 2: Initialize AuthClient</h2>
+        <div id="initStatus" class="status info">Not initialized</div>
+        <button id="initBtn">Initialize AuthClient</button>
+    </div>
+    
+    <div class="container">
+        <h2>Step 3: Authenticate</h2>
+        <div id="authStatus" class="status info">Not authenticated</div>
+        <button id="authBtn" disabled>Authenticate</button>
+        <button id="logoutBtn" disabled>Logout</button>
+    </div>
+    
+    <div class="container">
+        <h2>Step 4: Test Principal</h2>
+        <div id="principalInfo">No principal</div>
+        <button id="testPrincipalBtn" disabled>Test Principal</button>
+    </div>
+    
+    <div class="container">
+        <h2>Debug Information</h2>
+        <pre id="debugInfo">No debug info available</pre>
+    </div>
+
+    <script type="module">
+        import { AuthClient } from 'https://unpkg.com/@dfinity/auth-client@1.0.0/lib/index.js';
+        
+        let authClient = null;
+        let isAuthenticated = false;
+        
+        const envStatus = document.getElementById('envStatus');
+        const initStatus = document.getElementById('initStatus');
+        const authStatus = document.getElementById('authStatus');
+        const principalInfo = document.getElementById('principalInfo');
+        const debugInfo = document.getElementById('debugInfo');
+        
+        const checkEnvBtn = document.getElementById('checkEnvBtn');
+        const initBtn = document.getElementById('initBtn');
+        const authBtn = document.getElementById('authBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const testPrincipalBtn = document.getElementById('testPrincipalBtn');
+        
+        function updateStatus(element, message, type = 'info') {
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+        
+        function updateDebugInfo(info) {
+            debugInfo.textContent = JSON.stringify(info, null, 2);
+        }
+        
+        // Step 1: Check Environment
+        checkEnvBtn.addEventListener('click', () => {
+            const env = {
+                userAgent: navigator.userAgent,
+                hasWindow: typeof window !== 'undefined',
+                hasDocument: typeof document !== 'undefined',
+                hasAuthClient: typeof AuthClient !== 'undefined',
+                location: window.location.href,
+                timestamp: new Date().toISOString()
+            };
+            
+            updateDebugInfo(env);
+            
+            if (env.hasWindow && env.hasDocument && env.hasAuthClient) {
+                updateStatus(envStatus, 'Environment OK - All required APIs available', 'success');
+                initBtn.disabled = false;
+            } else {
+                updateStatus(envStatus, 'Environment Error - Missing required APIs', 'error');
+            }
+        });
+        
+        // Step 2: Initialize AuthClient
+        initBtn.addEventListener('click', async () => {
+            try {
+                updateStatus(initStatus, 'Initializing AuthClient...', 'info');
+                authClient = await AuthClient.create();
+                
+                const initInfo = {
+                    authClientCreated: !!authClient,
+                    isAuthenticated: authClient.isAuthenticated(),
+                    timestamp: new Date().toISOString()
+                };
+                
+                updateDebugInfo(initInfo);
+                
+                if (authClient.isAuthenticated()) {
+                    updateStatus(initStatus, 'AuthClient initialized - Already authenticated!', 'success');
+                    isAuthenticated = true;
+                    authBtn.disabled = true;
+                    logoutBtn.disabled = false;
+                    testPrincipalBtn.disabled = false;
+                    updatePrincipalInfo();
+                } else {
+                    updateStatus(initStatus, 'AuthClient initialized - Ready to authenticate', 'success');
+                    authBtn.disabled = false;
+                }
+            } catch (error) {
+                updateStatus(initStatus, `AuthClient initialization failed: ${error.message}`, 'error');
+                updateDebugInfo({ error: error.message, stack: error.stack });
+            }
+        });
+        
+        // Step 3: Authenticate
+        authBtn.addEventListener('click', async () => {
+            try {
+                updateStatus(authStatus, 'Starting authentication...', 'info');
+                
+                return new Promise((resolve, reject) => {
+                    authClient.login({
+                        identityProvider: 'https://identity.ic0.app/',
+                        onSuccess: () => {
+                            try {
+                                isAuthenticated = true;
+                                updateStatus(authStatus, 'Authentication successful!', 'success');
+                                authBtn.disabled = true;
+                                logoutBtn.disabled = false;
+                                testPrincipalBtn.disabled = false;
+                                updatePrincipalInfo();
+                                resolve();
+                            } catch (error) {
+                                reject(error);
+                            }
+                        },
+                        onError: (error) => {
+                            updateStatus(authStatus, `Authentication failed: ${error}`, 'error');
+                            updateDebugInfo({ authError: error });
+                            reject(error);
+                        }
+                    });
+                });
+            } catch (error) {
+                updateStatus(authStatus, `Authentication error: ${error.message}`, 'error');
+                updateDebugInfo({ error: error.message, stack: error.stack });
+            }
+        });
+        
+        // Logout
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await authClient.logout();
+                isAuthenticated = false;
+                updateStatus(authStatus, 'Logged out successfully', 'info');
+                authBtn.disabled = false;
+                logoutBtn.disabled = true;
+                testPrincipalBtn.disabled = true;
+                principalInfo.textContent = 'No principal';
+            } catch (error) {
+                updateStatus(authStatus, `Logout error: ${error.message}`, 'error');
+            }
+        });
+        
+        // Step 4: Test Principal
+        testPrincipalBtn.addEventListener('click', () => {
+            updatePrincipalInfo();
+        });
+        
+        function updatePrincipalInfo() {
+            if (isAuthenticated && authClient) {
+                const identity = authClient.getIdentity();
+                const principal = identity.getPrincipal();
+                const principalText = principal.toText();
+                
+                const principalData = {
+                    principal: principalText,
+                    isAnonymous: principalText === '2vxsx-fae',
+                    isValid: principalText !== '2vxsx-fae',
+                    timestamp: new Date().toISOString()
+                };
+                
+                updateDebugInfo(principalData);
+                
+                if (principalText === '2vxsx-fae') {
+                    principalInfo.innerHTML = `
+                        <strong>⚠️ Anonymous Principal Detected!</strong><br>
+                        Principal: ${principalText}<br>
+                        This is not a valid authenticated principal.
+                    `;
+                    updateStatus(authStatus, 'Warning: Anonymous principal detected', 'warning');
+                } else {
+                    principalInfo.innerHTML = `
+                        <strong>✅ Valid Principal!</strong><br>
+                        Principal: ${principalText}<br>
+                        This is a valid authenticated principal.
+                    `;
+                    updateStatus(authStatus, 'Valid principal confirmed', 'success');
+                }
+            } else {
+                principalInfo.textContent = 'No principal available';
+            }
+        }
+        
+        // Auto-check environment on load
+        checkEnvBtn.click();
+    </script>
+</body>
+</html> 

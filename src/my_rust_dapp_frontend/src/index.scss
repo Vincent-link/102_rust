@@ -268,8 +268,9 @@ body {
 /* Stats grid */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 15px;
+  margin-top: 15px;
 }
 
 .stat-item {
@@ -765,4 +766,373 @@ body {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+/* ckBTC Section Styles */
+.ckbtc-section {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  margin: 20px 0;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  border: 1px solid #e9ecef;
+}
+
+.ckbtc-section h3 {
+  margin: 0 0 20px 0;
+  color: #2c3e50;
+  font-size: 1.5rem;
+  border-bottom: 2px solid #3498db;
+  padding-bottom: 10px;
+}
+
+.ckbtc-setup {
+  text-align: center;
+  padding: 20px;
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: white;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.ckbtc-setup p {
+  margin: 0 0 15px 0;
+  font-size: 1.1rem;
+}
+
+.ckbtc-address {
+  background: #f8f9fa;
+  border: 2px solid #3498db;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.ckbtc-address p {
+  margin: 0 0 10px 0;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.address-display {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 15px 0;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.address-display code {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: #2c3e50;
+  word-break: break-all;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  background: #3498db;
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-small:hover {
+  background: #2980b9;
+  transform: translateY(-1px);
+}
+
+.address-note {
+  font-size: 0.9rem;
+  color: #7f8c8d;
+  font-style: italic;
+  margin: 10px 0 0 0;
+}
+
+/* ckBTC Deposit Form */
+.ckbtc-deposit {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.ckbtc-deposit h4 {
+  margin: 0 0 15px 0;
+  color: #2c3e50;
+  font-size: 1.2rem;
+}
+
+.ckbtc-deposit p {
+  margin: 0 0 20px 0;
+  color: #7f8c8d;
+  font-size: 0.95rem;
+}
+
+.deposit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.form-group label {
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 0.9rem;
+}
+
+.form-group .input {
+  padding: 12px;
+  border: 2px solid #e9ecef;
+  border-radius: 6px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+}
+
+.form-group .input:focus {
+  outline: none;
+  border-color: #3498db;
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+/* ckBTC Deposit History */
+.ckbtc-history {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.ckbtc-history h4 {
+  margin: 0 0 15px 0;
+  color: #2c3e50;
+  font-size: 1.2rem;
+}
+
+.deposit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deposit-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+  background: #f8f9fa;
+  transition: all 0.3s ease;
+}
+
+.deposit-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.deposit-item.pending {
+  border-left: 4px solid #f39c12;
+  background: #fff3cd;
+}
+
+.deposit-item.confirmed {
+  border-left: 4px solid #27ae60;
+  background: #e8f5e8;
+}
+
+.deposit-item.failed {
+  border-left: 4px solid #e74c3c;
+  background: #ffebee;
+}
+
+.deposit-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.deposit-amount {
+  font-weight: 700;
+  color: #2c3e50;
+  font-size: 1.1rem;
+}
+
+.deposit-status {
+  font-size: 0.8rem;
+  padding: 4px 8px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.deposit-status.pending {
+  background: #f39c12;
+  color: white;
+}
+
+.deposit-status.confirmed {
+  background: #27ae60;
+  color: white;
+}
+
+.deposit-status.failed {
+  background: #e74c3c;
+  color: white;
+}
+
+.deposit-details {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.deposit-hash {
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  color: #7f8c8d;
+}
+
+.deposit-time {
+  font-size: 0.8rem;
+  color: #7f8c8d;
+}
+
+/* Responsive Design for ckBTC Section */
+@media (max-width: 768px) {
+  .ckbtc-section {
+    padding: 15px;
+    margin: 15px 0;
+  }
+  
+  .address-display {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  
+  .address-display code {
+    font-size: 0.8rem;
+  }
+  
+  .deposit-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  
+  .deposit-details {
+    align-items: flex-start;
+  }
+  
+  .deposit-form {
+    gap: 12px;
+  }
+}
+
+/* Identity Guide Styles */
+.identity-guide {
+  margin-top: 30px;
+  padding: 25px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  border-radius: 12px;
+  border: 2px solid #5a67d8;
+}
+
+.identity-guide h5 {
+  margin: 0 0 20px 0;
+  font-size: 1.3rem;
+  color: #fbbf24;
+  text-align: center;
+}
+
+.identity-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.identity-option {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.identity-option:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.identity-option strong {
+  display: block;
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+  color: #fbbf24;
+}
+
+.identity-option p {
+  margin: 0 0 15px 0;
+  font-size: 0.9rem;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
+.identity-option .btn {
+  background: #10b981;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-block;
+  transition: all 0.3s ease;
+}
+
+.identity-option .btn:hover {
+  background: #059669;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+}
+
+/* Responsive Design for Identity Guide */
+@media (max-width: 768px) {
+  .identity-options {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+  
+  .identity-option {
+    padding: 15px;
+  }
+  
+  .identity-guide {
+    padding: 20px;
+    margin-top: 20px;
+  }
 }

@@ -1,209 +1,70 @@
 # Virtual BTC Lottery DApp
 
-This is a decentralized application built on the Internet Computer (IC) for a virtual BTC lottery. Users can connect via Internet Identity wallet, deposit virtual BTC, participate in lottery games, and have a chance to win prizes from the prize pool.
+A decentralized lottery application on the Internet Computer that allows users to play with real Bitcoin using ckBTC.
 
 ## Features
 
-### User Features
-- 🔐 **Internet Identity Wallet Connection** - Secure authentication
-- 👤 **User Registration** - Create personal account
-- 💰 **Virtual Deposit** - Deposit virtual BTC to account
-- 🎯 **Lottery Betting** - Participate in lottery games (1 BTC per bet)
-- 🏆 **Prize Winning** - Win prizes from the prize pool
-- 📊 **Transaction History** - View deposit and winning records
+- **Internet Identity Integration**: Secure authentication using Internet Identity
+- **Real Bitcoin Support**: Use ckBTC to play with actual Bitcoin
+- **Unique ckBTC Addresses**: Each user gets a unique Bitcoin address for deposits
+- **Automated Draws**: Lottery rounds with automated winner selection
+- **Admin Controls**: Manual draw triggers and system management
+- **Transaction History**: Complete record of all user activities
 
-### Admin Features
-- 👑 **Admin Authentication** - Initialize admin privileges
-- 🎲 **Manual Draw** - Trigger lottery draws manually
-- 📈 **System Statistics** - View overall system statistics
+## Identity System
+
+This application uses **Internet Identity** as the sole identity provider:
+
+- **Internet Identity**: Official Internet Computer identity provider
+- No browser extensions required
+- Visit [identity.ic0.app](https://identity.ic0.app/) to create an identity
+- Secure and user-friendly authentication
+
+## How It Works
+
+1. **Connect**: Use Internet Identity to connect to the application
+2. **Generate Address**: Get your unique ckBTC address for Bitcoin deposits
+3. **Deposit**: Send real Bitcoin to your generated address
+4. **Bet**: Use your balance to place lottery bets
+5. **Win**: Win real Bitcoin prizes when you're selected as the winner
 
 ## Technology Stack
 
-### Backend
-- **Rust** - Core canister logic
-- **Internet Computer** - Decentralized platform
-- **Candid** - Interface definition language
-- **DFX** - Development framework
-
-### Frontend
-- **JavaScript** - Main application logic
-- **Lit-HTML** - Template rendering
-- **SCSS** - Styling
-- **Vite** - Build tool
-
-## Project Structure
-
-```
-my_rust_dapp/
-├── src/
-│   ├── my_rust_dapp_backend/     # Rust canister backend
-│   │   ├── src/
-│   │   │   └── lib.rs           # Main canister logic
-│   │   └── my_rust_dapp_backend.did  # Candid interface
-│   └── my_rust_dapp_frontend/    # JavaScript frontend
-│       ├── src/
-│       │   ├── App.js           # Main application
-│       │   ├── wallet-utils.js  # Wallet utilities
-│       │   └── index.scss       # Styles
-│       └── index.html           # Entry point
-├── dfx.json                      # DFX configuration
-└── Cargo.toml                    # Rust dependencies
-```
+- **Backend**: Rust (Internet Computer canisters)
+- **Frontend**: JavaScript with Lit-HTML and SCSS
+- **Identity**: Internet Identity
+- **Bitcoin**: ckBTC integration for real Bitcoin support
 
 ## Getting Started
 
-### Prerequisites
-- Node.js (v16 or higher)
-- DFX (Internet Computer development kit)
-- Rust toolchain
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd my_rust_dapp
-   ```
-
-2. **Install dependencies**
-   ```bash
-   # Install frontend dependencies
-   cd src/my_rust_dapp_frontend
-   npm install
-   
-   # Return to root directory
-   cd ../..
-   ```
-
-3. **Start local network**
-   ```bash
-   dfx start --background
-   ```
-
-4. **Deploy canisters**
-   ```bash
-   dfx deploy
-   ```
-
-5. **Generate declarations**
-   ```bash
-   dfx generate
-   ```
-
-6. **Build frontend**
-   ```bash
-   cd src/my_rust_dapp_frontend
-   npm run build
-   ```
-
-7. **Start frontend**
-   ```bash
-   npm run dev
-   ```
-
-### Access the Application
-
-- **Frontend**: http://localhost:5173
-- **Canister ID**: Check `dfx.json` or run `dfx canister id my_rust_dapp_backend`
-
-## Usage
-
-### For Users
-
-1. **Connect Wallet**
-   - Open the application in your browser
-   - Click "Connect Wallet" and choose your preferred wallet
-   - Complete the authentication process
-
-2. **Create Account**
-   - After connecting, click "Create User" to register
-   - Your account will be created on the blockchain
-
-3. **Deposit Funds**
-   - Enter the amount of virtual BTC you want to deposit
-   - Click "Deposit" to add funds to your account
-
-4. **Place Bets**
-   - Click "Place Bet" to participate in the current round
-   - Each bet costs 1 BTC from your balance
-
-5. **Win Prizes**
-   - If you win, prizes will be automatically added to your balance
-   - Check your transaction history for details
-
-### For Admins
-
-1. **Initialize Admin**
-   - Connect your wallet
-   - Click "Initialize Admin Privileges"
-   - You'll become the admin of the system
-
-2. **Manual Draw**
-   - As admin, you can trigger manual draws
-   - Click "Manual Draw" to end the current round and select a winner
+1. Install Internet Identity from [identity.ic0.app](https://identity.ic0.app/)
+2. Deploy the canisters using dfx
+3. Connect your Internet Identity to start playing
 
 ## Development
 
-### Backend Development
-
-The backend is written in Rust and runs on the Internet Computer. Key files:
-
-- `src/my_rust_dapp_backend/src/lib.rs` - Main canister logic
-- `src/my_rust_dapp_backend/my_rust_dapp_backend.did` - Candid interface
-
-### Frontend Development
-
-The frontend uses JavaScript with Lit-HTML for rendering. Key files:
-
-- `src/my_rust_dapp_frontend/src/App.js` - Main application logic
-- `src/my_rust_dapp_frontend/src/wallet-utils.js` - Wallet integration utilities
-- `src/my_rust_dapp_frontend/src/index.scss` - Application styles
-
-### Testing
-
 ```bash
-# Test backend
-dfx test
-
-# Test frontend
-cd src/my_rust_dapp_frontend
-npm test
-```
-
-## Deployment
-
-### Local Development
-```bash
-dfx start --background
+# Deploy the application
 dfx deploy
+
+# Start the frontend
+dfx start --clean
 ```
 
-### Production Deployment
-```bash
-dfx deploy --network ic
-```
+## Architecture
 
-## Contributing
+- **Backend Canisters**: User management, round management, transaction handling
+- **Frontend**: Modern UI with real-time updates
+- **CkBTC Integration**: Bitcoin address generation and deposit tracking
+- **Admin System**: Privileged operations for lottery management
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+## Security
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- All transactions are recorded on the Internet Computer blockchain
+- User identities are verified through Internet Identity
+- Bitcoin deposits are tracked through ckBTC integration
+- Admin operations require proper authentication
 
 ## Support
 
-For support and questions:
-- Create an issue in the repository
-- Check the documentation
-- Review the troubleshooting guide
-
-## Acknowledgments
-
-- DFINITY Foundation for the Internet Computer platform
-- The IC community for tools and libraries
-- Contributors and testers
+For issues or questions, please refer to the Internet Computer documentation or contact the development team.
