@@ -16,7 +16,9 @@ type User = record {
   balance : nat64;
   transaction_history : vec Transaction;
   winning_history : vec Winning;
-  ckbtc_address : opt text;
+  deposit_account : Account;
+  principal_text : text;
+  last_balance_check : nat64;
 };
 
 type Round = record {
@@ -78,9 +80,13 @@ service : {
   initialize_auth : () -> ();
   create_user : (text) -> ();
   deposit : (nat64) -> ();
-  place_bet : (text, text) -> ();
+  place_bet : (text) -> ();
+  update_balance : (text) -> ();
+  update_balance_from_principal : (text) -> ();
+  withdraw_balance : (text, nat64) -> ();
   trigger_draw : () -> ();
   get_user : (principal) -> (opt User) query;
+  get_user_deposit_account : (text) -> (opt Account) query;
   get_round : () -> (Round) query;
   get_stats : () -> (SystemStats) query;
   get_canister_address : () -> (text) query;
@@ -94,4 +100,7 @@ service : {
   get_ckbtc_canister_id : () -> (text) query;
   get_last_error_log : () -> (opt text) query;
   get_user_debug_info : (principal) -> (text) query;
+  get_all_users_debug : () -> (vec text) query;
+  get_ckbtc_account_balance : (text, opt text) -> (variant { Ok : nat64; Err : text });
+  get_user_all_balances : (text) -> (variant { Ok : vec record { text; nat64 }; Err : text });
 };

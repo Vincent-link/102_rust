@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ckBTC Address Generator Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .address-display {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .explanation {
+            background: #e7f3ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ckBTC Address Generator Test</h1>
+        
+        <div class="explanation">
+            <h3>说明</h3>
+            <p>这个页面演示了如何生成类似 Bitcoin 地址格式的 ckBTC 地址。</p>
+            <p><strong>注意：</strong>这些是 ckBTC 地址，不是真正的 Bitcoin 地址。ckBTC 是 Internet Computer 上的比特币代币。</p>
+        </div>
+
+        <h2>示例地址生成</h2>
+        
+        <div id="addresses">
+            <h3>Short Address (推荐)</h3>
+            <div class="address-display" id="short-style">
+                正在生成...
+            </div>
+            <button class="btn" onclick="copyAddress('short-style')">复制地址</button>
+
+            <h3>IRCR-1 Standard Address</h3>
+            <div class="address-display" id="ircr1-style">
+                正在生成...
+            </div>
+            <button class="btn" onclick="copyAddress('ircr1-style')">复制地址</button>
+
+            <h3>Full Address</h3>
+            <div class="address-display" id="full-style">
+                正在生成...
+            </div>
+            <button class="btn" onclick="copyAddress('full-style')">复制地址</button>
+        </div>
+
+        <div class="explanation">
+            <h3>地址格式说明</h3>
+            <ul>
+                <li><strong>Short Address:</strong> 短格式地址 (~26字符，推荐使用)</li>
+                <li><strong>IRCR-1:</strong> Internet Computer 标准格式，使用 Base32 编码</li>
+                <li><strong>Full Address:</strong> 完整格式，包含所有详细信息</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Base58 编码函数
+        function base58Encode(str) {
+            const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+            let num = BigInt(0);
+            
+            // 将字符串转换为数字
+            for (let i = 0; i < str.length; i++) {
+                num = num * BigInt(256) + BigInt(str.charCodeAt(i));
+            }
+            
+            let result = '';
+            while (num > 0) {
+                const remainder = Number(num % BigInt(58));
+                result = alphabet[remainder] + result;
+                num = num / BigInt(58);
+            }
+            
+            // 处理前导零
+            for (let i = 0; i < str.length && str[i] === '\x00'; i++) {
+                result = '1' + result;
+            }
+            
+            return result;
+        }
+
+        // Base32 编码函数
+        function arrayToBase32(bytes) {
+            const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+            let bits = 0;
+            let value = 0;
+            let output = '';
+            
+            for (let i = 0; i < bytes.length; i++) {
+                value = (value << 8) | bytes[i];
+                bits += 8;
+                
+                while (bits >= 5) {
+                    output += alphabet[(value >>> (bits - 5)) & 31];
+                    bits -= 5;
+                }
+            }
+            
+            if (bits > 0) {
+                output += alphabet[(value << (5 - bits)) & 31];
+            }
+            
+            return output;
+        }
+
+        // 简单的哈希函数
+        function simpleHash(str) {
+            let hash = 0;
+            if (str.length === 0) return hash.toString();
+            
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // 转换为32位整数
+            }
+            
+            // 转换为16字节的字符串
+            const hashBytes = new Uint8Array(16);
+            for (let i = 0; i < 16; i++) {
+                hashBytes[i] = (hash >> (i * 2)) & 0xFF;
+            }
+            
+            return String.fromCharCode(...hashBytes);
+        }
+
+        // 生成示例地址
+        function generateAddresses() {
+            // 模拟用户数据
+            const owner = "2vxsx-fae"; // 示例 Principal
+            const subaccount = [44, 63, 199, 62, 147, 252, 39, 232, 210, 52, 27, 123, 206, 203, 83, 236, 237, 194, 145, 240, 241, 225, 198, 211, 158, 215, 39, 147, 2];
+            
+            // 生成短地址
+            let shortAddressData = owner;
+            if (subaccount && subaccount.length > 0) {
+                const shortSubaccount = subaccount.slice(0, 4);
+                const subaccountHex = shortSubaccount.map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+                shortAddressData = `${owner}${subaccountHex}`;
+            }
+            const hash = simpleHash(shortAddressData);
+            const base58Hash = base58Encode(hash);
+            const shortAddress = `ck1${base58Hash.substring(0, 24)}`;
+            
+            // 生成 IRCR-1 地址
+            let ircr1Address = owner;
+            if (subaccount && subaccount.length > 0) {
+                const subaccountBase32 = arrayToBase32(subaccount);
+                ircr1Address = `${owner}.${subaccountBase32}`;
+            }
+            
+            // 生成完整地址
+            let fullAddress = `ckbtc_${owner}`;
+            if (subaccount && subaccount.length > 0) {
+                const subaccountHex = subaccount.map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+                fullAddress = `ckbtc_${owner}_${subaccountHex}`;
+            }
+            
+            // 显示地址
+            document.getElementById('short-style').textContent = shortAddress;
+            document.getElementById('ircr1-style').textContent = ircr1Address;
+            document.getElementById('full-style').textContent = fullAddress;
+        }
+
+        // 复制地址函数
+        function copyAddress(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('地址已复制到剪贴板！');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                // 备用复制方法
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('地址已复制到剪贴板！');
+            });
+        }
+
+        // 页面加载时生成地址
+        window.onload = generateAddresses;
+    </script>
+</body>
+</html> 
