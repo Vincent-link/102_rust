@@ -5,6 +5,7 @@ use candid::{CandidType, Principal, Nat};
 use ic_cdk::api::time;
 use ic_cdk_macros::*;
 use ic_cdk_timers::set_timer_interval;
+use ic_cdk::storage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -14,6 +15,15 @@ use std::time::Duration;
 pub struct Account {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
+}
+
+impl Default for Account {
+    fn default() -> Self {
+        Self {
+            owner: Principal::anonymous(),
+            subaccount: None,
+        }
+    }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone, Debug)]
@@ -70,6 +80,22 @@ pub struct User {
     last_balance_check: u64, // Last time balance was checked
 }
 
+impl Default for User {
+    fn default() -> Self {
+        Self {
+            balance: 0,
+            transaction_history: vec![],
+            winning_history: vec![],
+            deposit_account: Account {
+                owner: Principal::anonymous(),
+                subaccount: None,
+            },
+            principal_text: String::new(),
+            last_balance_check: 0,
+        }
+    }
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct Round {
     id: u64,
@@ -80,6 +106,19 @@ pub struct Round {
     winners: Vec<Principal>,
 }
 
+impl Default for Round {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            participants: vec![],
+            prize_pool: 0,
+            start_time: time(),
+            end_time: time() + ROUND_DURATION,
+            winners: vec![],
+        }
+    }
+}
+
 #[derive(CandidType, Deserialize, Serialize, Clone)]
 pub struct SystemStats {
     total_rounds: u64,
@@ -87,6 +126,18 @@ pub struct SystemStats {
     total_winnings: u64,
     active_users: u64,
     total_ckbtc_deposits: u64,
+}
+
+impl Default for SystemStats {
+    fn default() -> Self {
+        Self {
+            total_rounds: 0,
+            total_bets: 0,
+            total_winnings: 0,
+            active_users: 0,
+            total_ckbtc_deposits: 0,
+        }
+    }
 }
 
 #[derive(CandidType, Deserialize, Serialize, Clone)]
@@ -105,6 +156,33 @@ const BALANCE_CHECK_INTERVAL: u64 = 60_000_000_000; // 1 minute in nanoseconds
 
 // ICRC-1 ckBTC canister interface
 type CkBtcCanister = candid::Principal;
+
+// 稳定的数据结构，用于持久化存储
+#[derive(CandidType, Deserialize, Serialize)]
+struct StableStorage {
+    users: HashMap<Principal, User>,
+    current_round: Round,
+    stats: SystemStats,
+    admin: Option<Principal>,
+    ckbtc_deposits: HashMap<String, CkBtcDeposit>,
+    treasury_account: Account, // 统一资金账户
+}
+
+impl Default for StableStorage {
+    fn default() -> Self {
+        Self {
+            users: HashMap::new(),
+            current_round: Round::default(),
+            stats: SystemStats::default(),
+            admin: None,
+            ckbtc_deposits: HashMap::new(),
+            treasury_account: Account {
+                owner: Principal::anonymous(), // 临时设置，后续会更新为实际的管理员账户
+                subaccount: None,
+            },
+        }
+    }
+}
 
 thread_local! {
     static ADMIN: std::cell::RefCell<Option<Principal>> = std::cell::RefCell::new(None);
@@ -126,6 +204,118 @@ thread_local! {
     });
     static TIMER_INITIALIZED: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
     static CKBTC_DEPOSITS: std::cell::RefCell<HashMap<String, CkBtcDeposit>> = std::cell::RefCell::new(HashMap::new());
+    static TREASURY_ACCOUNT: std::cell::RefCell<Account> = std::cell::RefCell::new(Account {
+        owner: Principal::anonymous(),
+        subaccount: None,
+    });
+}
+
+// 稳定的存储变量
+static mut STABLE_STORAGE: Option<StableStorage> = None;
+
+// 获取稳定存储的引用
+fn get_stable_storage() -> &'static mut StableStorage {
+    unsafe {
+        if STABLE_STORAGE.is_none() {
+            STABLE_STORAGE = Some(StableStorage::default());
+        }
+        STABLE_STORAGE.as_mut().unwrap()
+    }
+}
+
+// 从稳定存储加载数据到线程本地存储
+fn load_from_stable_storage() {
+    let stable = get_stable_storage();
+    
+    // 加载用户数据
+    USERS.with(|users| {
+        *users.borrow_mut() = stable.users.clone();
+    });
+    
+    // 加载当前轮次
+    CURRENT_ROUND.with(|round| {
+        *round.borrow_mut() = stable.current_round.clone();
+    });
+    
+    // 加载统计信息
+    STATS.with(|stats| {
+        *stats.borrow_mut() = stable.stats.clone();
+    });
+    
+    // 加载管理员
+    ADMIN.with(|admin| {
+        *admin.borrow_mut() = stable.admin;
+    });
+    
+    // 加载 ckBTC 存款记录
+    CKBTC_DEPOSITS.with(|deposits| {
+        *deposits.borrow_mut() = stable.ckbtc_deposits.clone();
+    });
+    
+    // 加载统一资金账户
+    TREASURY_ACCOUNT.with(|treasury| {
+        *treasury.borrow_mut() = stable.treasury_account.clone();
+    });
+}
+
+// 保存数据到稳定存储
+fn save_to_stable_storage() {
+    let stable = get_stable_storage();
+    
+    // 保存用户数据
+    USERS.with(|users| {
+        stable.users = users.borrow().clone();
+    });
+    
+    // 保存当前轮次
+    CURRENT_ROUND.with(|round| {
+        stable.current_round = round.borrow().clone();
+    });
+    
+    // 保存统计信息
+    STATS.with(|stats| {
+        stable.stats = stats.borrow().clone();
+    });
+    
+    // 保存管理员
+    ADMIN.with(|admin| {
+        stable.admin = *admin.borrow();
+    });
+    
+    // 保存 ckBTC 存款记录
+    CKBTC_DEPOSITS.with(|deposits| {
+        stable.ckbtc_deposits = deposits.borrow().clone();
+    });
+    
+    // 保存统一资金账户
+    TREASURY_ACCOUNT.with(|treasury| {
+        stable.treasury_account = treasury.borrow().clone();
+    });
+}
+
+#[pre_upgrade]
+fn pre_upgrade() {
+    // 在升级前保存数据到稳定存储
+    save_to_stable_storage();
+    
+    // 将稳定存储序列化到 stable memory
+    let stable = get_stable_storage();
+    storage::stable_save((stable,)).expect("Failed to save to stable memory");
+}
+
+#[post_upgrade]
+fn post_upgrade() {
+    // 尝试从 stable memory 反序列化数据，如果失败则用默认值
+    let stable_result: Result<(StableStorage,), _> = storage::stable_restore();
+    let stable = match stable_result {
+        Ok((stable,)) => stable,
+        Err(_) => StableStorage::default(),
+    };
+    unsafe {
+        STABLE_STORAGE = Some(stable);
+    }
+    load_from_stable_storage();
+    ensure_timer_initialized();
 }
 
 #[update]
@@ -137,24 +327,44 @@ pub fn initialize_auth() {
         }
     });
     
+    // 设置统一资金账户为管理员账户
+    TREASURY_ACCOUNT.with(|treasury| {
+        *treasury.borrow_mut() = Account {
+            owner: caller,
+            subaccount: None,
+        };
+    });
+    
     // Initialize timer
     initialize_timer();
+    
+    // 保存数据到稳定存储
+    save_to_stable_storage();
+}
+
+// 自动初始化定时器，确保轮次能正常进行
+fn ensure_timer_initialized() {
+    TIMER_INITIALIZED.with(|initialized| {
+        if !*initialized.borrow() {
+            initialize_timer();
+        }
+    });
 }
 
 fn initialize_timer() {
     TIMER_INITIALIZED.with(|initialized| {
         if !*initialized.borrow() {
-            // Set timer to check round status every 5 minutes
-            set_timer_interval(Duration::from_secs(300), || {
+            // Set timer to check round status every 30 seconds (更频繁的检查)
+            set_timer_interval(Duration::from_secs(30), || {
                 ic_cdk::spawn(async {
                     check_and_auto_draw().await;
                 });
             });
             
-            // Set timer to check user balances every minute
-            set_timer_interval(Duration::from_secs(60), || {
+            // Set timer to auto consolidate accounts every 10 minutes
+            set_timer_interval(Duration::from_secs(600), || {
                 ic_cdk::spawn(async {
-                    check_all_user_balances().await;
+                    auto_consolidate_accounts().await;
                 });
             });
             
@@ -165,13 +375,21 @@ fn initialize_timer() {
 
 async fn check_and_auto_draw() {
     let current_time = time();
-    let should_draw = CURRENT_ROUND.with(|r| {
+    let round_info = CURRENT_ROUND.with(|r| {
         let round = r.borrow();
-        current_time >= round.end_time
+        (round.clone(), current_time >= round.end_time)
     });
     
+    let (round, should_draw) = round_info;
+    
     if should_draw {
+        ic_cdk::println!("🎲 [AUTO_DRAW] Round {} ended, starting auto draw...", round.id);
         auto_draw_winner();
+        
+        // 保存数据到稳定存储
+        save_to_stable_storage();
+        
+        ic_cdk::println!("✅ [AUTO_DRAW] Auto draw completed, new round {} started", round.id + 1);
     }
 }
 
@@ -179,11 +397,13 @@ fn auto_draw_winner() {
     let winner = CURRENT_ROUND.with(|r| {
         let mut round = r.borrow_mut();
         if round.participants.is_empty() {
+            ic_cdk::println!("🎲 [AUTO_DRAW] No participants in round {}, starting new round", round.id);
             return Some(round.clone());
         }
         let idx = time() as usize % round.participants.len();
         let winner = round.participants[idx];
         round.winners = vec![winner];
+        ic_cdk::println!("🎲 [AUTO_DRAW] Winner selected: {} from {} participants", winner, round.participants.len());
         Some(round.clone())
     });
     
@@ -205,6 +425,7 @@ fn auto_draw_winner() {
                         timestamp: time(),
                         round_id: winner.id,
                     });
+                    ic_cdk::println!("🎉 [AUTO_DRAW] Winner {} received {} e8s prize", winner.winners[0], winner.prize_pool);
                 }
             });
         }
@@ -217,16 +438,22 @@ fn auto_draw_winner() {
             }
         });
 
+        // 创建新轮次
+        let new_round = Round {
+            id: winner.id + 1,
+            participants: vec![],
+            prize_pool: 0,
+            start_time: time(),
+            end_time: time() + ROUND_DURATION,
+            winners: vec![],
+        };
+        
         CURRENT_ROUND.with(|r| {
-            *r.borrow_mut() = Round {
-                id: winner.id + 1,
-                participants: vec![],
-                prize_pool: 0,
-                start_time: time(),
-                end_time: time() + ROUND_DURATION,
-                winners: vec![],
-            }
+            *r.borrow_mut() = new_round.clone();
         });
+        
+        ic_cdk::println!("🔄 [AUTO_DRAW] New round {} started: start_time={}, end_time={}", 
+                       new_round.id, new_round.start_time, new_round.end_time);
     }
 }
 
@@ -250,31 +477,23 @@ async fn check_all_user_balances() {
     }
 }
 
-// 更新单个用户余额
+// 更新单个用户余额并自动归集到统一账户
 async fn update_user_balance(principal: Principal, account: Account) {
     ic_cdk::println!("💰 [UPDATE_BALANCE] Checking balance for user: {}", principal);
-    
     let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
-    
-    // Clone account for the call, keep original for later use
     let account_for_call = account.clone();
-    
     match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (account_for_call,)).await {
         Ok((balance,)) => {
             let balance_u64: u64 = balance.0.try_into().unwrap_or(0);
-            
             USERS.with(|users| {
                 let mut users_ref = users.borrow_mut();
                 if let Some(user) = users_ref.get_mut(&principal) {
                     let old_balance = user.balance;
-                    user.balance = balance_u64;
                     user.last_balance_check = time();
-                    
                     if balance_u64 > old_balance {
                         let deposit_amount = balance_u64 - old_balance;
+                        user.balance += deposit_amount;
                         ic_cdk::println!("✅ [UPDATE_BALANCE] User {} deposited {} e8s", principal, deposit_amount);
-                        
-                        // 记录充值交易
                         user.transaction_history.push(Transaction {
                             amount: deposit_amount,
                             timestamp: time(),
@@ -282,9 +501,12 @@ async fn update_user_balance(principal: Principal, account: Account) {
                             tx_hash: None,
                             ckbtc_address: Some(format!("{:?}", account)),
                         });
-                        
-                        // 更新统计
                         STATS.with(|s| s.borrow_mut().total_ckbtc_deposits += deposit_amount);
+                        
+                        // 自动归集到统一账户
+                        ic_cdk::spawn(async move {
+                            auto_consolidate_to_treasury(principal, deposit_amount, account).await;
+                        });
                     }
                 }
             });
@@ -306,6 +528,9 @@ fn assert_admin() {
 
 #[update]
 pub fn create_user(principal: String) {
+    // 确保定时器已初始化
+    ensure_timer_initialized();
+    
     let caller = ic_cdk::caller();
     ic_cdk::println!("👤 [CREATE_USER] Creating user for caller: {}", caller);
     ic_cdk::println!("👤 [CREATE_USER] Requested principal: {}", principal);
@@ -346,6 +571,9 @@ pub fn create_user(principal: String) {
             ic_cdk::println!("🧪 [CREATE_USER] User already exists: {}", requested_principal);
         }
     });
+    
+    // 保存数据到稳定存储
+    save_to_stable_storage();
 }
 
 #[query]
@@ -432,34 +660,24 @@ pub fn update_balance_from_principal(principal_str: String) {
 // 新增：更新 Principal 余额的函数
 async fn update_principal_balance(principal: Principal) {
     ic_cdk::println!("💰 [UPDATE_PRINCIPAL_BALANCE] Checking ckBTC balance for principal: {}", principal);
-    
     let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
-    
-    // 检查 Principal 的主账户余额（没有 subaccount）
     let main_account = Account {
         owner: principal,
         subaccount: None,
     };
-    
     match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (main_account,)).await {
         Ok((balance,)) => {
             let balance_u64: u64 = balance.0.try_into().unwrap_or(0);
             ic_cdk::println!("✅ [UPDATE_PRINCIPAL_BALANCE] Principal {} has {} e8s in main account", principal, balance_u64);
-            
-            // 更新用户余额
             USERS.with(|users| {
                 let mut users_ref = users.borrow_mut();
                 if let Some(user) = users_ref.get_mut(&principal) {
                     let old_balance = user.balance;
-                    user.balance = balance_u64;
                     user.last_balance_check = time();
-                    
                     if balance_u64 > old_balance {
                         let deposit_amount = balance_u64 - old_balance;
-                        ic_cdk::println!("✅ [UPDATE_PRINCIPAL_BALANCE] User {} balance updated: {} -> {} e8s", 
-                                       principal, old_balance, balance_u64);
-                        
-                        // 记录充值交易
+                        user.balance += deposit_amount;
+                        ic_cdk::println!("✅ [UPDATE_PRINCIPAL_BALANCE] User {} balance updated: {} -> {} e8s", principal, old_balance, user.balance);
                         user.transaction_history.push(Transaction {
                             amount: deposit_amount,
                             timestamp: time(),
@@ -467,8 +685,6 @@ async fn update_principal_balance(principal: Principal) {
                             tx_hash: None,
                             ckbtc_address: Some(format!("Principal: {}", principal)),
                         });
-                        
-                        // 更新统计
                         STATS.with(|s| s.borrow_mut().total_ckbtc_deposits += deposit_amount);
                     }
                 }
@@ -482,6 +698,9 @@ async fn update_principal_balance(principal: Principal) {
 
 #[update]
 pub fn place_bet(principal_str: String) {
+    // 确保定时器已初始化
+    ensure_timer_initialized();
+    
     let caller = ic_cdk::caller();
     ic_cdk::println!("🎲 [PLACE_BET] Caller: {}", caller);
     ic_cdk::println!("🎲 [PLACE_BET] Requested principal: {}", principal_str);
@@ -532,21 +751,25 @@ pub fn place_bet(principal_str: String) {
         }
     });
 
-    // 添加用户到当前轮次
+    // 添加用户到当前轮次（支持多次下注）
     CURRENT_ROUND.with(|r| {
         let mut round = r.borrow_mut();
         ic_cdk::println!("🎲 [PLACE_BET] Current round info: ID={}, participants={}, prize_pool={} e8s", 
                        round.id, round.participants.len(), round.prize_pool);
         
-        if !round.participants.contains(&requested_principal) {
-            round.participants.push(requested_principal);
-            let old_prize_pool = round.prize_pool;
-            round.prize_pool += TICKET_PRICE;
-            ic_cdk::println!("🎲 [PLACE_BET] User added to round participants: {}", requested_principal);
-            ic_cdk::println!("🎲 [PLACE_BET] Prize pool updated: {} -> {} e8s", old_prize_pool, round.prize_pool);
-        } else {
-            ic_cdk::println!("🎲 [PLACE_BET] User already in round participants: {}", requested_principal);
-        }
+        // 允许用户多次下注：每次下注都添加到参与者列表
+        round.participants.push(requested_principal);
+        let old_prize_pool = round.prize_pool;
+        round.prize_pool += TICKET_PRICE;
+        
+        // 计算用户在本轮的下注次数
+        let user_bet_count = round.participants.iter()
+            .filter(|&&p| p == requested_principal)
+            .count();
+        
+        ic_cdk::println!("🎲 [PLACE_BET] User added to round participants: {} (bet #{})", requested_principal, user_bet_count);
+        ic_cdk::println!("🎲 [PLACE_BET] Prize pool updated: {} -> {} e8s", old_prize_pool, round.prize_pool);
+        ic_cdk::println!("🎲 [PLACE_BET] Total participants in round: {}", round.participants.len());
     });
 
     // 更新统计
@@ -556,10 +779,13 @@ pub fn place_bet(principal_str: String) {
     });
 
     ic_cdk::println!("✅ [PLACE_BET] Bet placement successful for user: {}", requested_principal);
+    
+    // 保存数据到稳定存储
+    save_to_stable_storage();
 }
 
 #[update]
-pub fn withdraw_balance(principal_str: String, amount: u64) {
+pub async fn withdraw_balance(principal_str: String, amount: u64) -> Result<String, String> {
     let caller = ic_cdk::caller();
     ic_cdk::println!("💸 [WITHDRAW] Withdrawal requested by: {}", caller);
     ic_cdk::println!("💸 [WITHDRAW] Requested principal: {}", principal_str);
@@ -569,7 +795,7 @@ pub fn withdraw_balance(principal_str: String, amount: u64) {
         Ok(p) => p,
         Err(e) => {
             ic_cdk::println!("❌ [WITHDRAW] Invalid principal format: {}", e);
-            ic_cdk::trap("Invalid principal format");
+            return Err(format!("Invalid principal format: {}", e));
         }
     };
     
@@ -581,61 +807,79 @@ pub fn withdraw_balance(principal_str: String, amount: u64) {
     if let Some(user) = user_info {
         if user.balance < amount {
             ic_cdk::println!("❌ [WITHDRAW] INSUFFICIENT BALANCE: User has {} but wants to withdraw {}", user.balance, amount);
-            ic_cdk::trap("Insufficient balance for withdrawal");
+            return Err(format!("Insufficient balance for withdrawal. User has {} but wants to withdraw {}", user.balance, amount));
         }
         
-        // 创建转账参数
+        // 🔄 提现前先自动归集用户的充值账户
+        ic_cdk::println!("🔄 [WITHDRAW] Auto consolidating user accounts before withdrawal");
+        match auto_consolidate_user_accounts(requested_principal).await {
+            Ok(consolidated_amount) => {
+                ic_cdk::println!("✅ [WITHDRAW] Auto consolidation completed: {} e8s consolidated", consolidated_amount);
+            },
+            Err(error) => {
+                ic_cdk::println!("⚠️ [WITHDRAW] Auto consolidation failed: {}", error);
+                // 继续提现流程，不因为归集失败而阻止提现
+            }
+        }
+        
+        // 从统一账户提现给用户
+        let treasury_account = TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone());
+        let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
+        
+        // 创建转账参数 - 从统一账户转给用户
         let transfer_args = TransferArgs {
             to: Account {
                 owner: requested_principal,
                 subaccount: None,
             },
             amount,
-            fee: Some(10_000), // 0.0001 ckBTC fee
-            memo: Some(format!("Lottery withdrawal").into_bytes()),
-            from_subaccount: Some(requested_principal.as_slice().to_vec()),
+            fee: Some(1_000), // 0.00001 ckBTC fee (降低费用)
+            memo: Some(format!("Lottery withdrawal from treasury").into_bytes()),
+            from_subaccount: treasury_account.subaccount.clone(),
             created_at_time: Some(time()),
         };
         
-        // 调用 ckBTC canister 进行转账
-        let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
-        
-        ic_cdk::spawn(async move {
-            match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
-                Ok((result,)) => {
-                    match result {
-                        TransferResult::Ok(block_index) => {
-                            ic_cdk::println!("✅ [WITHDRAW] Withdrawal successful! Block index: {}", block_index);
-                            
-                            // 更新用户余额
-                            USERS.with(|users| {
-                                let mut users_ref = users.borrow_mut();
-                                if let Some(user) = users_ref.get_mut(&requested_principal) {
-                                    user.balance -= amount;
-                                    
-                                    // 记录提现交易
-                                    user.transaction_history.push(Transaction {
-                                        amount,
-                                        timestamp: time(),
-                                        transaction_type: "Withdraw".to_string(),
-                                        tx_hash: Some(format!("withdraw_{}", block_index)),
-                                        ckbtc_address: Some(format!("{:?}", user.deposit_account)),
-                                    });
-                                }
-                            });
-                        },
-                        TransferResult::Err(error) => {
-                            ic_cdk::println!("❌ [WITHDRAW] Transfer failed: {:?}", error);
-                        }
+        match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
+            Ok((result,)) => {
+                match result {
+                    TransferResult::Ok(block_index) => {
+                        ic_cdk::println!("✅ [WITHDRAW] Withdrawal from treasury successful! Block index: {}", block_index);
+                        
+                        // 更新用户余额
+                        USERS.with(|users| {
+                            let mut users_ref = users.borrow_mut();
+                            if let Some(user) = users_ref.get_mut(&requested_principal) {
+                                user.balance -= amount;
+                                
+                                // 记录提现交易
+                                user.transaction_history.push(Transaction {
+                                    amount,
+                                    timestamp: time(),
+                                    transaction_type: "Withdraw".to_string(),
+                                    tx_hash: Some(format!("withdraw_{}", block_index)),
+                                    ckbtc_address: Some(format!("Treasury: {:?}", treasury_account)),
+                                });
+                            }
+                        });
+                        
+                        // 保存数据到稳定存储
+                        save_to_stable_storage();
+                        
+                        Ok(format!("Withdrawal successful! Block index: {}", block_index))
+                    },
+                    TransferResult::Err(error) => {
+                        ic_cdk::println!("❌ [WITHDRAW] Transfer from treasury failed: {:?}", error);
+                        Err(format!("Transfer from treasury failed: {:?}", error))
                     }
-                },
-                Err(error) => {
-                    ic_cdk::println!("❌ [WITHDRAW] Call to ckBTC canister failed: {:?}", error);
                 }
+            },
+            Err(error) => {
+                ic_cdk::println!("❌ [WITHDRAW] Call to ckBTC canister failed: {:?}", error);
+                Err(format!("Call to ckBTC canister failed: {:?}", error))
             }
-        });
+        }
     } else {
-        ic_cdk::trap("User not found");
+        Err("User not found".to_string())
     }
 }
 
@@ -643,8 +887,10 @@ pub fn withdraw_balance(principal_str: String, amount: u64) {
 pub fn get_user(principal: Principal) -> Option<User> {
     ic_cdk::println!("🔍 [GET_USER] Looking up user: {}", principal);
     let result = USERS.with(|users| users.borrow().get(&principal).cloned());
-    if result.is_some() {
+    if let Some(ref user) = result {
         ic_cdk::println!("✅ [GET_USER] User found: {}", principal);
+        ic_cdk::println!("✅ [GET_USER] User balance: {} e8s ({} ckBTC)", 
+                       user.balance, user.balance as f64 / 100_000_000.0);
     } else {
         ic_cdk::println!("❌ [GET_USER] User not found: {}", principal);
     }
@@ -701,10 +947,16 @@ pub fn trigger_draw() {
             winners: vec![],
         }
     });
+    
+    // 保存数据到稳定存储
+    save_to_stable_storage();
 }
 
 #[query]
 pub fn get_round() -> Round {
+    // 确保定时器已初始化
+    ensure_timer_initialized();
+    
     CURRENT_ROUND.with(|r| r.borrow().clone())
 }
 
@@ -944,9 +1196,9 @@ pub async fn get_user_ckbtc_balance(principal: Principal) -> Nat {
     let ckbtc_canister: Principal = Principal::from_text("mxzaz-hqaaa-aaaar-qaada-cai").unwrap();
 
     match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (account,)).await {
-        Ok((balance_nat,)) => {
-            ic_cdk::println!("✅ ckBTC balance of {:?}: {}", principal, balance_nat.0);
-            balance_nat
+        Ok((balance,)) => {
+            ic_cdk::println!("✅ ckBTC balance of {:?}: {}", principal, balance.0);
+            balance
         },
         Err(e) => {
             let msg = format!("❌ Failed to get ckBTC balance for {}: {:?}", principal, e);
@@ -979,7 +1231,7 @@ pub fn get_ckbtc_canister_id() -> String {
 }
 
 // 新增：查询特定 ckBTC 账户余额
-#[query]
+#[update]
 pub async fn get_ckbtc_account_balance(owner: String, subaccount_hex: Option<String>) -> Result<u64, String> {
     ic_cdk::println!("💰 [GET_CKBTC_ACCOUNT_BALANCE] Checking balance for owner: {}, subaccount: {:?}", owner, subaccount_hex);
     
@@ -1034,8 +1286,56 @@ pub async fn get_ckbtc_account_balance(owner: String, subaccount_hex: Option<Str
     }
 }
 
+// 新增：自动归集到统一账户
+async fn auto_consolidate_to_treasury(principal: Principal, amount: u64, from_account: Account) {
+    ic_cdk::println!("🔄 [AUTO_CONSOLIDATE_TREASURY] Consolidating {} e8s from user {} to treasury", amount, principal);
+    
+    let treasury_account = TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone());
+    let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
+    
+    // 创建转账参数
+    let transfer_args = TransferArgs {
+        to: treasury_account.clone(),
+        amount,
+        fee: Some(1_000), // 0.00001 ckBTC fee (降低费用)
+        memo: Some(format!("Auto consolidation from user {}", principal).into_bytes()),
+        from_subaccount: from_account.subaccount.clone(),
+        created_at_time: Some(time()),
+    };
+    
+    match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
+        Ok((result,)) => {
+            match result {
+                TransferResult::Ok(block_index) => {
+                    ic_cdk::println!("✅ [AUTO_CONSOLIDATE_TREASURY] Successfully consolidated {} e8s to treasury (Block: {})", amount, block_index);
+                    
+                    // 记录归集交易
+                    USERS.with(|users| {
+                        let mut users_ref = users.borrow_mut();
+                        if let Some(user) = users_ref.get_mut(&principal) {
+                            user.transaction_history.push(Transaction {
+                                amount,
+                                timestamp: time(),
+                                transaction_type: "TreasuryConsolidation".to_string(),
+                                tx_hash: Some(format!("treasury_consolidation_{}", block_index)),
+                                ckbtc_address: Some(format!("Treasury: {:?}", treasury_account)),
+                            });
+                        }
+                    });
+                },
+                TransferResult::Err(error) => {
+                    ic_cdk::println!("❌ [AUTO_CONSOLIDATE_TREASURY] Transfer to treasury failed: {:?}", error);
+                }
+            }
+        },
+        Err(error) => {
+            ic_cdk::println!("❌ [AUTO_CONSOLIDATE_TREASURY] Call to ckBTC canister failed: {:?}", error);
+        }
+    }
+}
+
 // 新增：查询用户所有相关账户的余额
-#[query]
+#[update]
 pub async fn get_user_all_balances(principal_str: String) -> Result<Vec<(String, u64)>, String> {
     ic_cdk::println!("💰 [GET_USER_ALL_BALANCES] Checking all balances for user: {}", principal_str);
     
@@ -1092,4 +1392,286 @@ pub async fn get_user_all_balances(principal_str: String) -> Result<Vec<(String,
     }
     
     Ok(balances)
+}
+
+
+
+// 新增：查询统一账户余额
+#[update]
+pub async fn get_treasury_balance() -> Result<u64, String> {
+    let treasury_account = TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone());
+    let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
+    
+    match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (treasury_account,)).await {
+        Ok((balance,)) => {
+            let balance_u64: u64 = balance.0.try_into().unwrap_or(0);
+            ic_cdk::println!("💰 [TREASURY_BALANCE] Treasury balance: {} e8s", balance_u64);
+            Ok(balance_u64)
+        },
+        Err(error) => {
+            ic_cdk::println!("❌ [TREASURY_BALANCE] Failed to get treasury balance: {:?}", error);
+            Err(format!("Failed to get treasury balance: {:?}", error))
+        }
+    }
+}
+
+// 新增：获取统一账户信息
+#[query]
+pub fn get_treasury_account() -> Account {
+    TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone())
+}
+
+
+
+// 新增：内部自动归集用户账户函数
+async fn auto_consolidate_user_accounts(principal: Principal) -> Result<u64, String> {
+    ic_cdk::println!("🔄 [AUTO_CONSOLIDATE_USER] Consolidating accounts for user: {}", principal);
+    
+    // 获取用户信息
+    let user = USERS.with(|users| {
+        users.borrow().get(&principal).cloned()
+    });
+    
+    if user.is_none() {
+        return Err("User not found".to_string());
+    }
+    
+    let user = user.unwrap();
+    let ckbtc_canister: CkBtcCanister = CKBTC_CANISTER_ID.parse().unwrap();
+    let mut total_consolidated = 0u64;
+    
+    // 1. 检查 deposit account 余额
+    let deposit_balance = match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (user.deposit_account.clone(),)).await {
+        Ok((balance,)) => {
+            let balance_u64: u64 = balance.0.try_into().unwrap_or(0);
+            ic_cdk::println!("💰 [AUTO_CONSOLIDATE_USER] Deposit account balance: {} e8s", balance_u64);
+            balance_u64
+        },
+        Err(error) => {
+            ic_cdk::println!("❌ [AUTO_CONSOLIDATE_USER] Failed to get deposit account balance: {:?}", error);
+            0
+        }
+    };
+    
+    // 2. 如果 deposit account 有余额，转移到统一账户
+    if deposit_balance > 0 {
+        let treasury_account = TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone());
+        let transfer_args = TransferArgs {
+            to: treasury_account,
+            amount: deposit_balance,
+            fee: Some(1_000), // 0.00001 ckBTC fee (降低费用)
+            memo: Some(format!("Auto consolidation from user {}", principal).into_bytes()),
+            from_subaccount: user.deposit_account.subaccount.clone(),
+            created_at_time: Some(time()),
+        };
+        
+        match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
+            Ok((result,)) => {
+                match result {
+                    TransferResult::Ok(block_index) => {
+                        total_consolidated += deposit_balance;
+                        ic_cdk::println!("✅ [AUTO_CONSOLIDATE_USER] Deposit account consolidated: {} e8s (Block: {})", deposit_balance, block_index);
+                    },
+                    TransferResult::Err(error) => {
+                        ic_cdk::println!("❌ [AUTO_CONSOLIDATE_USER] Deposit account transfer failed: {:?}", error);
+                    }
+                }
+            },
+            Err(error) => {
+                ic_cdk::println!("❌ [AUTO_CONSOLIDATE_USER] Call to ckBTC canister failed: {:?}", error);
+            }
+        }
+    }
+    
+    // 3. 检查其他可能的 subaccount
+    let other_subaccounts = vec![
+        Some(principal.as_slice().to_vec()),
+    ];
+    
+    for subaccount in other_subaccounts {
+        if let Some(subaccount_bytes) = subaccount {
+            let account = Account {
+                owner: principal,
+                subaccount: Some(subaccount_bytes.clone()),
+            };
+            
+            let balance = match ic_cdk::call::<_, (Nat,)>(ckbtc_canister, "icrc1_balance_of", (account,)).await {
+                Ok((balance,)) => {
+                    let balance_u64: u64 = balance.0.try_into().unwrap_or(0);
+                    balance_u64
+                },
+                Err(_) => 0,
+            };
+            
+            if balance > 0 {
+                let treasury_account = TREASURY_ACCOUNT.with(|treasury| treasury.borrow().clone());
+                let transfer_args = TransferArgs {
+                    to: treasury_account,
+                    amount: balance,
+                    fee: Some(1_000), // 0.00001 ckBTC fee (降低费用)
+                    memo: Some(format!("Auto consolidation from user {}", principal).into_bytes()),
+                    from_subaccount: Some(subaccount_bytes),
+                    created_at_time: Some(time()),
+                };
+                
+                match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
+                    Ok((result,)) => {
+                        match result {
+                            TransferResult::Ok(block_index) => {
+                                total_consolidated += balance;
+                                ic_cdk::println!("✅ [AUTO_CONSOLIDATE_USER] Subaccount consolidated: {} e8s (Block: {})", balance, block_index);
+                            },
+                            TransferResult::Err(error) => {
+                                ic_cdk::println!("❌ [AUTO_CONSOLIDATE_USER] Subaccount transfer failed: {:?}", error);
+                            }
+                        }
+                    },
+                    Err(error) => {
+                        ic_cdk::println!("❌ [AUTO_CONSOLIDATE_USER] Subaccount transfer call failed: {:?}", error);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 4. 更新用户余额记录
+    if total_consolidated > 0 {
+        USERS.with(|users| {
+            let mut users_ref = users.borrow_mut();
+            if let Some(user) = users_ref.get_mut(&principal) {
+                user.balance += total_consolidated;
+                user.transaction_history.push(Transaction {
+                    amount: total_consolidated,
+                    timestamp: time(),
+                    transaction_type: "AutoConsolidation".to_string(),
+                    tx_hash: Some(format!("auto_consolidation_{}", time())),
+                    ckbtc_address: Some(format!("Treasury: {}", principal)),
+                });
+            }
+        });
+        
+        // 更新统计
+        STATS.with(|s| {
+            s.borrow_mut().total_ckbtc_deposits += total_consolidated;
+        });
+        
+        // 保存数据到稳定存储
+        save_to_stable_storage();
+    }
+    
+    ic_cdk::println!("✅ [AUTO_CONSOLIDATE_USER] Auto consolidation completed for user: {} (Total: {} e8s)", principal, total_consolidated);
+    Ok(total_consolidated)
+}
+
+// 新增：定时自动归集功能
+async fn auto_consolidate_accounts() {
+    ic_cdk::println!("🔄 [AUTO_CONSOLIDATE_TIMER] Starting scheduled account consolidation");
+    
+    let users = USERS.with(|users| {
+        users.borrow().keys().cloned().collect::<Vec<_>>()
+    });
+    
+    for principal in users {
+        ic_cdk::spawn(async move {
+            match auto_consolidate_user_accounts(principal).await {
+                Ok(amount) => {
+                    ic_cdk::println!("✅ [AUTO_CONSOLIDATE_TIMER] User {}: Consolidated {} e8s", principal, amount);
+                },
+                Err(error) => {
+                    ic_cdk::println!("❌ [AUTO_CONSOLIDATE_TIMER] User {}: Error - {}", principal, error);
+                }
+            }
+        });
+    }
+}
+
+// 新增：自动归集所有用户的账户（管理员功能）
+#[update]
+pub async fn auto_consolidate_all_accounts() -> Result<String, String> {
+    assert_admin();
+    
+    ic_cdk::println!("🔄 [AUTO_CONSOLIDATE] Starting automatic consolidation for all users");
+    
+    let users = USERS.with(|users| {
+        users.borrow().keys().cloned().collect::<Vec<_>>()
+    });
+    
+    let users_count = users.len();
+    let mut total_consolidated = 0u64;
+    let mut success_count = 0;
+    let mut error_count = 0;
+    let mut consolidation_log = Vec::new();
+    
+    for principal in users.clone() {
+        ic_cdk::println!("🔄 [AUTO_CONSOLIDATE] Processing user: {}", principal);
+        
+        // 直接调用内部自动归集函数
+        match auto_consolidate_user_accounts(principal).await {
+            Ok(amount) => {
+                success_count += 1;
+                if amount > 0 {
+                    total_consolidated += amount;
+                    consolidation_log.push(format!("User {}: Consolidated {} e8s", principal, amount));
+                } else {
+                    consolidation_log.push(format!("User {}: No funds to consolidate", principal));
+                }
+            },
+            Err(error) => {
+                error_count += 1;
+                consolidation_log.push(format!("User {}: Error - {}", principal, error));
+            }
+        }
+    }
+    
+    let result_message = format!(
+        "🔄 Auto consolidation completed!\n\n\
+        Total users processed: {}\n\
+        Successful consolidations: {}\n\
+        Errors: {}\n\
+        Total amount consolidated: {} e8s\n\n\
+        Details:\n{}",
+        users_count,
+        success_count,
+        error_count,
+        total_consolidated,
+        consolidation_log.join("\n")
+    );
+    
+    ic_cdk::println!("✅ [AUTO_CONSOLIDATE] Auto consolidation completed");
+    Ok(result_message)
+}
+
+// 新增：手动触发轮次自动开始（管理员功能）
+#[update]
+pub fn manual_trigger_round_auto_start() -> Result<String, String> {
+    assert_admin();
+    
+    ic_cdk::println!("🎲 [MANUAL_TRIGGER] Manual round auto-start triggered by admin");
+    
+    let current_time = time();
+    let round_info = CURRENT_ROUND.with(|r| {
+        let round = r.borrow();
+        (round.clone(), current_time >= round.end_time)
+    });
+    
+    let (round, should_draw) = round_info;
+    
+    if should_draw {
+        ic_cdk::println!("🎲 [MANUAL_TRIGGER] Round {} ended, starting auto draw...", round.id);
+        auto_draw_winner();
+        
+        // 保存数据到稳定存储
+        save_to_stable_storage();
+        
+        ic_cdk::println!("✅ [MANUAL_TRIGGER] Auto draw completed, new round {} started", round.id + 1);
+        Ok(format!("Round {} auto-started successfully! New round {} is now active.", round.id, round.id + 1))
+    } else {
+        let remaining_time = round.end_time - current_time;
+        let remaining_seconds = remaining_time / 1_000_000_000;
+        let remaining_minutes = remaining_seconds / 60;
+        let remaining_secs = remaining_seconds % 60;
+        
+        Ok(format!("Round {} is still active. {}:{} remaining.", 
+                  round.id, remaining_minutes, remaining_secs))
+    }
 }

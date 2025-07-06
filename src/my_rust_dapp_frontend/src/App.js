@@ -19,7 +19,6 @@ class App {
     this.identityProvider = null; // 'internet-identity'
     this.countdown = null; // Countdown
     this.countdownInterval = null; // Countdown timer
-    this.balanceCheckInterval = null; // 余额检查间隔
     this.userDepositAccount = null; // 用户充值账户
 
     this.pageState = 'connect'; // 'connect', 'dashboard', 'loading'
@@ -32,6 +31,8 @@ class App {
     this.isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
     this.isWeChat = /MicroMessenger/i.test(navigator.userAgent);
     this.isQQ = /QQ/i.test(navigator.userAgent);
+    
+    this.activePage = 'game'; // 'game' or 'profile'
     
     // Render immediately, then initialize asynchronously
     this.#render();
@@ -73,8 +74,8 @@ class App {
         await this.loadUserData();
         console.log('User data loaded, currentUser:', this.currentUser);
         
-        // Start balance monitoring
-        this.startBalanceMonitoring();
+        // 移除自动余额监控，用户需要手动更新余额
+        console.log('Balance monitoring disabled - users must manually update balance');
       } else {
         console.log('No existing connection found, user needs to connect');
         console.log('Status details:', {
@@ -131,8 +132,8 @@ class App {
           throw new Error('Failed to create or load user data');
         }
         
-        // Start balance monitoring
-        this.startBalanceMonitoring();
+        // 移除自动余额监控，用户需要手动更新余额
+        console.log('Balance monitoring disabled - users must manually update balance');
         
         // Show success message
         this.showMessage(`${this.getProviderName(result.provider)} connection successful!`, 'success');
@@ -387,24 +388,35 @@ class App {
 
   // 查询所有资产余额（目前只查ckBTC，结构可扩展）
   async loadAllAssetBalances() {
-    this.assetBalances = {};
-    if (!this.userDepositAccount || !this.userDepositAccount.owner) return;
-    const owner = this.userDepositAccount.owner.toString();
-    const subaccount = this.userDepositAccount.subaccount;
-    const subaccountHex = subaccount ? Array.from(subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('') : null;
-    const subaccountHexOpt = subaccountHex ? [subaccountHex] : [];
-    for (const asset of SUPPORTED_ASSETS) {
-      try {
-        // 只查ckBTC，调用 get_ckbtc_account_balance
-        if (asset.symbol === 'ckBTC') {
-          const result = await my_rust_dapp_backend.get_ckbtc_account_balance(owner, subaccountHexOpt);
-          this.assetBalances[asset.symbol] = result.Ok !== undefined ? result.Ok : 0;
-        } else {
-          this.assetBalances[asset.symbol] = 0;
-        }
-      } catch (e) {
-        this.assetBalances[asset.symbol] = 0;
+    try {
+      this.loading = true;
+      this.#render();
+      
+      console.log('Checking all balances for user:', this.userPrincipal);
+      
+      const result = await my_rust_dapp_backend.get_user_all_balances(this.userPrincipal);
+      
+      if (result.Ok !== undefined) {
+        const balances = result.Ok;
+        let message = '💰 All Account Balances:\n\n';
+        
+        balances.forEach(([accountName, balance]) => {
+          const balanceFormatted = this.formatBalance(balance);
+          message += `${accountName}: ${balanceFormatted}\n`;
+        });
+        
+        alert(message);
+        this.showMessage('All balances retrieved successfully!', 'success');
+      } else if (result.Err !== undefined) {
+        this.showMessage('Failed to get all balances: ' + result.Err, 'error');
       }
+      
+    } catch (error) {
+      console.error('Failed to check all user balances:', error);
+      this.showMessage('Failed to check all balances: ' + error.message, 'error');
+    } finally {
+      this.loading = false;
+      this.#render();
     }
   }
 
@@ -499,19 +511,42 @@ class App {
       // Ensure user exists
       await this.ensureUserExists();
 
-      console.log('currentUser:', this.currentUser);
+      console.log('currentUser before bet:', this.currentUser);
+      console.log('Balance before bet:', this.currentUser ? this.currentUser.balance : 'No user');
       
       console.log('Placing bet for user:', this.userPrincipal);
       await my_rust_dapp_backend.place_bet(this.userPrincipal);
       
       // Reload data to see updated round info
+      console.log('Reloading user data after bet...');
       await this.loadUserData();
+      console.log('User data reloaded, currentUser:', this.currentUser);
+      console.log('Balance after bet:', this.currentUser ? this.currentUser.balance : 'No user');
+      
+      // Force refresh user data after a short delay to ensure backend state is updated
+      setTimeout(async () => {
+        console.log('Force refreshing user data...');
+        await this.loadUserData();
+        console.log('Force refreshed user data, currentUser:', this.currentUser);
+        console.log('Force refreshed balance:', this.currentUser ? this.currentUser.balance : 'No user');
+        this.#render();
+      }, 1000);
+      
       await this.loadRoundData();
       
-      this.showMessage('Bet placed successfully! You are now participating in the current round.', 'success');
+      this.showMessage('Bet placed successfully! You can place more bets to increase your chances of winning!', 'success');
     } catch (error) {
       console.error('Failed to place bet:', error);
-      this.showMessage('Bet placement failed: ' + error.message, 'error');
+      let msg = error && error.message ? error.message : String(error);
+      if (msg.includes('Insufficient balance for bet')) {
+        this.showMessage('余额不足，无法下注。请先充值 ckBTC。', 'error');
+      } else if (msg.includes('User not found')) {
+        this.showMessage('用户不存在，请重新登录或注册。', 'error');
+      } else if (msg.includes('Invalid principal format')) {
+        this.showMessage('用户身份格式有误，请重新登录。', 'error');
+      } else {
+        this.showMessage('下注失败：' + msg, 'error');
+      }
     } finally {
       this.loading = false;
       this.#render();
@@ -595,6 +630,7 @@ class App {
         if (Array.isArray(userResult) && userResult.length > 0) {
           this.currentUser = userResult[0];
           console.log('User data extracted from array:', this.currentUser);
+          console.log('User balance from backend:', this.currentUser.balance);
         } else {
           console.log('No user found, userResult is empty array or null');
           this.currentUser = null;
@@ -726,15 +762,70 @@ class App {
       : Number(this.currentRound.end_time);
     
     if (now >= endTime) {
-      this.countdown = 'Round ended';
-      // Reload round data to check for new round
-      this.loadRoundData();
+      this.countdown = '⏰ Round Ended';
+      
+      // 智能自动刷新轮次数据
+      if (!this._autoRoundRefresh) {
+        this._autoRoundRefresh = setInterval(async () => {
+          try {
+            await this.loadRoundData();
+            
+            // 检查是否新一轮已开始
+            const newNow = Date.now() * 1_000_000;
+            const newEndTime = typeof this.currentRound.end_time === 'bigint' 
+              ? Number(this.currentRound.end_time) 
+              : Number(this.currentRound.end_time);
+            
+            if (newNow < newEndTime) {
+              // 新一轮已开始
+              clearInterval(this._autoRoundRefresh);
+              this._autoRoundRefresh = null;
+              this.updateCountdown(); // 立即刷新倒计时
+              
+              // 显示新轮次开始的消息
+              this.showMessage('🎉 New round started!', 'success');
+              
+              // 自动刷新用户数据
+              await this.loadUserData();
+            }
+          } catch (error) {
+            console.error('Auto round refresh error:', error);
+          }
+        }, 3000); // 每3秒检查一次，更频繁的检查
+      }
     } else {
+      // 正常倒计时时，清除自动刷新
+      if (this._autoRoundRefresh) {
+        clearInterval(this._autoRoundRefresh);
+        this._autoRoundRefresh = null;
+      }
+      
       const remaining = endTime - now;
       const seconds = Math.floor(remaining / 1_000_000_000);
       const minutes = Math.floor(seconds / 60);
       const remainingSeconds = seconds % 60;
-      this.countdown = `${minutes}:${(remainingSeconds || 0).toString().padStart(2, '0')}`;
+      
+      // 根据剩余时间添加不同的表情符号和颜色提示
+      let emoji = '⏰';
+      let urgency = '';
+      
+      if (minutes <= 1) {
+        emoji = '⚡';
+        urgency = 'final';
+      } else if (minutes <= 2) {
+        emoji = '🔥';
+        urgency = 'urgent';
+      } else if (minutes <= 5) {
+        emoji = '🎯';
+        urgency = 'active';
+      }
+      
+      this.countdown = `${emoji} ${minutes}:${(remainingSeconds || 0).toString().padStart(2, '0')}`;
+      
+      // 在最后30秒显示特殊提示
+      if (seconds <= 30 && seconds > 0) {
+        this.countdown += ' ⚡';
+      }
     }
     
     // Only re-render if countdown changed
@@ -745,7 +836,7 @@ class App {
   }
 
   getRoundStatus() {
-    if (!this.currentRound) return 'Loading...';
+    if (!this.currentRound) return '🔄 Loading...';
     
     const now = Date.now() * 1_000_000;
     const endTime = typeof this.currentRound.end_time === 'bigint' 
@@ -753,9 +844,22 @@ class App {
       : Number(this.currentRound.end_time);
     
     if (now >= endTime) {
-      return 'Round ended';
+      return '⏰ Round Ended - Auto starting next round...';
     } else {
-      return 'Active';
+      const timeLeft = endTime - now;
+      const minutesLeft = Math.floor(timeLeft / (60 * 1_000_000_000));
+      const secondsLeft = Math.floor(timeLeft / 1_000_000_000);
+      
+      if (minutesLeft <= 1) {
+        if (secondsLeft <= 30) {
+          return '⚡ Final seconds!';
+        }
+        return '⚡ Final moments!';
+      } else if (minutesLeft <= 2) {
+        return '🔥 Almost time!';
+      } else {
+        return '🎯 Round Active';
+      }
     }
   }
 
@@ -763,35 +867,19 @@ class App {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
     }
-    if (this.balanceCheckInterval) {
-      clearInterval(this.balanceCheckInterval);
-    }
+    // 移除余额检查间隔清理，因为已经禁用了自动余额监控
   }
 
   // Start balance monitoring
   startBalanceMonitoring() {
-    if (this.balanceCheckInterval) {
-      clearInterval(this.balanceCheckInterval);
-    }
-    
-    // Check principal balance every 30 seconds
-    this.balanceCheckInterval = setInterval(async () => {
-      if (this.isConnected) {
-        try {
-          await this.updateBalance();
-        } catch (error) {
-          console.error('Failed to check principal balance:', error);
-        }
-      }
-    }, 30000); // 30 seconds
+    // 移除自动余额监控，用户需要手动更新余额
+    console.log('Balance monitoring disabled - users must manually update balance');
   }
 
   // Stop balance monitoring
   stopBalanceMonitoring() {
-    if (this.balanceCheckInterval) {
-      clearInterval(this.balanceCheckInterval);
-      this.balanceCheckInterval = null;
-    }
+    // 移除自动余额监控
+    console.log('Balance monitoring already disabled');
   }
 
   // 生成标准的 ckBTC 地址格式
@@ -893,6 +981,71 @@ class App {
     const shortAddress = `ck1${base58Hash.substring(0, 24)}`;
     
     return shortAddress;
+  }
+
+  // 获取用户在当前轮次的下注次数
+  getUserBetCount() {
+    if (!this.currentRound || !this.userPrincipal) return 0;
+    
+    const userPrincipal = this.userPrincipal.toString();
+    return this.currentRound.participants.filter(p => p.toString() === userPrincipal).length;
+  }
+
+  // 生成类似比特币地址格式的 ckBTC 地址（64字符十六进制）
+  generateBitcoinStyleAddress() {
+    if (!this.userDepositAccount || !this.userDepositAccount.owner) {
+      return null;
+    }
+    
+    const owner = this.userDepositAccount.owner.toString();
+    const subaccount = this.userDepositAccount.subaccount;
+    
+    // 创建地址数据
+    let addressData = owner;
+    if (subaccount && Array.isArray(subaccount) && subaccount.length > 0) {
+      // 将 subaccount 转换为十六进制字符串
+      const subaccountHex = Array.from(subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+      addressData = `${owner}_${subaccountHex}`;
+    }
+    
+    // 使用 SHA256 哈希生成比特币风格的地址
+    const hash = this.sha256Hash(addressData);
+    
+    // 将哈希转换为64字符的十六进制字符串
+    const hexHash = Array.from(hash).map(char => 
+      char.charCodeAt(0).toString(16).padStart(2, '0')
+    ).join('');
+    
+    // 确保长度为64字符
+    const bitcoinStyleAddress = hexHash.substring(0, 64);
+    
+    return bitcoinStyleAddress;
+  }
+
+  // 改进的 SHA256 哈希函数（生成64字符十六进制）
+  sha256Hash(str) {
+    // 简单的哈希实现（实际应用中应使用真实的 SHA256）
+    let hash = 0;
+    if (str.length === 0) return hash.toString();
+    
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // 转换为32位整数
+    }
+    
+    // 生成32字节的哈希数据
+    const hashBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      hashBytes[i] = (hash >> (i % 4)) & 0xFF;
+    }
+    
+    // 添加额外的熵以确保唯一性
+    for (let i = 0; i < 32; i++) {
+      hashBytes[i] = (hashBytes[i] + str.charCodeAt(i % str.length)) & 0xFF;
+    }
+    
+    return String.fromCharCode(...hashBytes);
   }
 
   // 简单的哈希函数
@@ -1025,298 +1178,581 @@ class App {
     return address;
   }
 
+  // 格式化 subaccount 显示，在移动端显示更短
+  formatSubaccount(subaccount) {
+    if (!subaccount || !Array.isArray(subaccount)) return '';
+    
+    const fullHex = Array.from(subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+    
+    // 在移动端显示更短的版本
+    if (this.isMobile) {
+      // 移动端只显示前8位和后8位
+      if (fullHex.length > 16) {
+        return `${fullHex.substring(0, 8)}...${fullHex.substring(fullHex.length - 8)}`;
+      }
+      return fullHex;
+    }
+    
+    // 桌面端显示完整版本，但如果太长也进行分段
+    if (fullHex.length > 64) {
+      return `${fullHex.substring(0, 32)}...${fullHex.substring(fullHex.length - 32)}`;
+    }
+    
+    return fullHex;
+  }
+
+  // 格式化 Principal 显示，在移动端显示更短
+  formatPrincipal(principal) {
+    if (!principal) return '';
+    
+    // 在移动端显示更短的版本
+    if (this.isMobile) {
+      // 移动端只显示前12位和后8位
+      if (principal.length > 20) {
+        return `${principal.substring(0, 12)}...${principal.substring(principal.length - 8)}`;
+      }
+      return principal;
+    }
+    
+    // 桌面端显示完整版本，但如果太长也进行分段
+    if (principal.length > 50) {
+      return `${principal.substring(0, 25)}...${principal.substring(principal.length - 25)}`;
+    }
+    
+    return principal;
+  }
+
+  // 显示完整文本（用于移动端点击查看完整信息）
+  showFullText(text) {
+    const fallbackCopy = (txt) => {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = txt;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return successful;
+      } catch (e) {
+        return false;
+      }
+    };
+    if (this.isMobile) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          alert(`完整信息已复制:\n${text}`);
+        }).catch(() => {
+          if (fallbackCopy(text)) {
+            alert(`完整信息已复制:\n${text}`);
+          } else {
+            alert(`复制失败，请手动长按选择复制:\n${text}`);
+          }
+        });
+      } else {
+        if (fallbackCopy(text)) {
+          alert(`完整信息已复制:\n${text}`);
+        } else {
+          alert(`复制失败，请手动长按选择复制:\n${text}`);
+        }
+      }
+    } else {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          this.showMessage('已复制到剪贴板', 'success');
+        }).catch(() => {
+          if (fallbackCopy(text)) {
+            this.showMessage('已复制到剪贴板', 'success');
+          } else {
+            this.showMessage('复制失败，请手动选择复制', 'error');
+          }
+        });
+      } else {
+        if (fallbackCopy(text)) {
+          this.showMessage('已复制到剪贴板', 'success');
+        } else {
+          this.showMessage('复制失败，请手动选择复制', 'error');
+        }
+      }
+    }
+  }
+
+  // 显示完整 subaccount
+  showFullSubaccount(subaccount) {
+    if (!subaccount || !Array.isArray(subaccount)) return;
+    const fullHex = Array.from(subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+    const fallbackCopy = (txt) => {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = txt;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return successful;
+      } catch (e) {
+        return false;
+      }
+    };
+    if (this.isMobile) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullHex).then(() => {
+          alert(`完整 Subaccount 已复制:\n${fullHex}`);
+        }).catch(() => {
+          if (fallbackCopy(fullHex)) {
+            alert(`完整 Subaccount 已复制:\n${fullHex}`);
+          } else {
+            alert(`复制失败，请手动长按选择复制:\n${fullHex}`);
+          }
+        });
+      } else {
+        if (fallbackCopy(fullHex)) {
+          alert(`完整 Subaccount 已复制:\n${fullHex}`);
+        } else {
+          alert(`复制失败，请手动长按选择复制:\n${fullHex}`);
+        }
+      }
+    } else {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullHex).then(() => {
+          this.showMessage('Subaccount 已复制到剪贴板', 'success');
+        }).catch(() => {
+          if (fallbackCopy(fullHex)) {
+            this.showMessage('Subaccount 已复制到剪贴板', 'success');
+          } else {
+            this.showMessage('复制失败，请手动选择复制', 'error');
+          }
+        });
+      } else {
+        if (fallbackCopy(fullHex)) {
+          this.showMessage('Subaccount 已复制到剪贴板', 'success');
+        } else {
+          this.showMessage('复制失败，请手动选择复制', 'error');
+        }
+      }
+    }
+  }
+
+  copyPrincipal(principal) {
+    if (!principal) return;
+    const text = principal.toString();
+    const fallbackCopy = (txt) => {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = txt;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'absolute';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return successful;
+      } catch (e) {
+        return false;
+      }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        if (this.isMobile) {
+          alert(`Principal 已复制:\n${text}`);
+        } else {
+          this.showMessage('Principal 已复制到剪贴板', 'success');
+        }
+      }).catch(() => {
+        if (fallbackCopy(text)) {
+          if (this.isMobile) {
+            alert(`Principal 已复制:\n${text}`);
+          } else {
+            this.showMessage('Principal 已复制到剪贴板', 'success');
+          }
+        } else {
+          if (this.isMobile) {
+            alert('复制失败，请手动长按选择复制');
+          } else {
+            this.showMessage('复制失败，请手动选择复制', 'error');
+          }
+        }
+      });
+    } else {
+      if (fallbackCopy(text)) {
+        if (this.isMobile) {
+          alert(`Principal 已复制:\n${text}`);
+        } else {
+          this.showMessage('Principal 已复制到剪贴板', 'success');
+        }
+      } else {
+        if (this.isMobile) {
+          alert('复制失败，请手动长按选择复制');
+        } else {
+          this.showMessage('复制失败，请手动选择复制', 'error');
+        }
+      }
+    }
+  }
+
+
+
+  // 新增：管理员自动归集所有用户账户
+  async autoConsolidateAllAccounts() {
+    try {
+      this.loading = true;
+      this.#render();
+      
+      console.log('Starting auto consolidation for all users');
+      
+      const result = await my_rust_dapp_backend.auto_consolidate_all_accounts();
+      
+      if (result.Ok !== undefined) {
+        this.showMessage('Auto consolidation completed!', 'success');
+        alert(result.Ok);
+      } else if (result.Err !== undefined) {
+        this.showMessage('Auto consolidation failed: ' + result.Err, 'error');
+      }
+      
+    } catch (error) {
+      console.error('Failed to auto consolidate all accounts:', error);
+      this.showMessage('Failed to auto consolidate: ' + error.message, 'error');
+    } finally {
+      this.loading = false;
+      this.#render();
+    }
+  }
+
+  // 新增：查询统一账户余额
+  async checkTreasuryBalance() {
+    try {
+      this.loading = true;
+      this.#render();
+      
+      console.log('Checking treasury balance');
+      
+      const result = await my_rust_dapp_backend.get_treasury_balance();
+      
+      if (result.Ok !== undefined) {
+        const balance = result.Ok;
+        const balanceFormatted = this.formatBalance(balance);
+        this.showMessage(`Treasury balance: ${balanceFormatted}`, 'success');
+        alert(`Treasury Balance: ${balanceFormatted}`);
+      } else if (result.Err !== undefined) {
+        this.showMessage('Failed to get treasury balance: ' + result.Err, 'error');
+      }
+      
+    } catch (error) {
+      console.error('Failed to check treasury balance:', error);
+      this.showMessage('Failed to check treasury balance: ' + error.message, 'error');
+    } finally {
+      this.loading = false;
+      this.#render();
+    }
+  }
+
+  async getTreasuryAccount() {
+    try {
+      this.loading = true;
+      this.#render();
+      
+      console.log('Getting treasury account info');
+      
+      const treasuryAccount = await my_rust_dapp_backend.get_treasury_account();
+      
+      if (treasuryAccount) {
+        const ownerText = treasuryAccount.owner.toString();
+        const subaccountText = treasuryAccount.subaccount ? 
+          Array.from(treasuryAccount.subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('') : 
+          'None';
+        
+        const accountInfo = `Treasury Account Info:\n\nOwner: ${ownerText}\nSubaccount: ${subaccountText}`;
+        this.showMessage('Treasury account info retrieved successfully!', 'success');
+        alert(accountInfo);
+      } else {
+        this.showMessage('Failed to get treasury account info', 'error');
+      }
+      
+    } catch (error) {
+      console.error('Failed to get treasury account:', error);
+      this.showMessage('Failed to get treasury account: ' + error.message, 'error');
+    } finally {
+      this.loading = false;
+      this.#render();
+    }
+  }
+
+
+
+  // 新增：手动触发轮次自动开始
+  async manualTriggerRoundAutoStart() {
+    try {
+      this.loading = true;
+      this.#render();
+      
+      console.log('Manually triggering round auto-start');
+      
+      const result = await my_rust_dapp_backend.manual_trigger_round_auto_start();
+      
+      this.showMessage('Round auto-start triggered successfully!', 'success');
+      alert(result);
+      
+      // 刷新轮次数据
+      await this.loadRoundData();
+      
+    } catch (error) {
+      console.error('Failed to trigger round auto-start:', error);
+      this.showMessage('Failed to trigger round auto-start: ' + error.message, 'error');
+    } finally {
+      this.loading = false;
+      this.#render();
+    }
+  }
+
+
+
   #render() {
     if (this.renderScheduled) return;
     this.renderScheduled = true;
     requestAnimationFrame(() => {
       this.renderScheduled = false;
       render(html`
-        <div class="app-container">
-          <header class="header">
-            <img src="${logo}" alt="BTC Lottery logo" class="logo" />
-            <h1>Virtual BTC Lottery</h1>
-            <div class="header-actions">
-              ${!this.isConnected ? html`
-                <button class="btn btn-login" @click=${this.connectIdentity.bind(this)}>
-                  Login
-                </button>
-                <div class="mobile-login-tip">
-                  ${this.isWeChat || this.isQQ ? 
-                    '⚠️ 微信/QQ内置浏览器不支持登录，请点击右上角"..."选择"在浏览器中打开"' :
-                    this.isMobile && this.isSafari ?
-                    '📱 Safari浏览器登录可能需要允许弹窗，如遇问题请尝试Chrome' :
-                    this.isMobile ?
-                    '📱 如无法登录，请用系统浏览器（Safari/Chrome）打开本页面' :
-                    '🔐 点击上方按钮登录 Internet Identity'
-                  }
-                </div>
-              ` : html`
-                <div class="user-info-header">
-                  <span class="principal-id">${this.userPrincipal ? this.userPrincipal.toString() : ''}</span>
-                  <button class="btn btn-logout" @click=${this.disconnectIdentity.bind(this)}>
-                    Logout
-                  </button>
-                </div>
-              `}
-              <button 
-                class="btn btn-small debug-btn" 
-                @click=${this.toggleDebugMode.bind(this)}
-              >
-                Debug ${this.debugMode ? 'ON' : 'OFF'}
-              </button>
-            </div>
-          </header>
-
-          ${this.message ? html`
-            <div class="message ${this.messageType}">
-              ${this.message}
-            </div>
-          ` : ''}
-
-          <main class="main-content main-flex">
-            <section class="main-left">
-              ${!this.isConnected ? html`
- 
-              ` : html`
-                <div class="dashboard dashboard-personal">
-                  <h2>Personal Center</h2>
-                  <div class="wallet-details-personal">
-                    <p><strong>Principal:</strong> <span class="principal-id">${this.userPrincipal ? this.userPrincipal.toString() : ''}</span></p>
-                    <p><strong>Balance:</strong> <span style="color: #38a169; font-weight: bold;">${this.currentUser ? this.formatBalance(this.currentUser.balance) : '0.00000000 ckBTC'}</span></p>
-                    
-                    <div class="deposit-account-info">
-                      <h4>Your ckBTC Account & Deposit Address</h4>
-                      ${this.userDepositAccount && this.userDepositAccount.owner ? html`
-                        <div class="address-display">
-                          <div class="address-content">
-                            <span class="address-label">Account Identifier:</span>
-                            <code class="address-code">${this.generateAccountIdentifier()}</code>
-                          </div>
-                          <button class="btn-small copy-btn" @click=${() => navigator.clipboard.writeText(this.generateAccountIdentifier())}>
-                            Copy
-                          </button>
-                        </div>
-                        <div class="address-display">
-                          <div class="address-content">
-                            <span class="address-label">IRCR-1 Format:</span>
-                            <code class="address-code">${this.generateIrc1Address()}</code>
-                          </div>
-                          <button class="btn-small copy-btn" @click=${() => navigator.clipboard.writeText(this.generateIrc1Address())}>
-                            Copy
-                          </button>
-                        </div>
-                        <div class="address-display">
-                          <div class="address-content">
-                            <span class="address-label">Short Address:</span>
-                            <code class="address-code">${this.generateShortCkBtcAddress()}</code>
-                          </div>
-                          <button class="btn-small copy-btn" @click=${() => navigator.clipboard.writeText(this.generateShortCkBtcAddress())}>
-                            Copy
-                          </button>
-                        </div>
-                        <div class="address-details">
-                          <small style="color: #666; display: block; margin-top: 8px;">
-                            <strong>Owner:</strong> ${this.userDepositAccount.owner.toString()}
-                            ${this.userDepositAccount.subaccount && Array.isArray(this.userDepositAccount.subaccount) ? html`
-                              <br><strong>Subaccount:</strong> ${Array.from(this.userDepositAccount.subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('')}
-                            ` : ''}
-                          </small>
-                        </div>
-                        <div class="deposit-instructions" style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-top: 15px;">
-                          <h5 style="margin: 0 0 10px 0; color: #2c3e50;">How to Deposit ckBTC:</h5>
-                          <ol style="margin: 0; padding-left: 20px; color: #555; font-size: 0.9rem;">
-                            <li>Copy any of the account identifiers above (Account Identifier is standard)</li>
-                            <li>Send ckBTC to this account from your wallet</li>
-                            <li>Click "Update Balance" to check for new deposits</li>
-                            <li>Your balance will be updated automatically</li>
-                          </ol>
-                          <div style="margin: 10px 0 0 0; padding: 10px; background: #fff3cd; border-radius: 4px; border-left: 4px solid #ffc107;">
-                            <p style="margin: 0 0 5px 0; color: #856404; font-size: 0.85rem; font-weight: 600;">
-                              📋 Account & Address Explanation:
-                            </p>
-                            <ul style="margin: 0; padding-left: 20px; color: #856404; font-size: 0.8rem;">
-                              <li><strong>Account Identifier:</strong> Standard ckBTC account ID (derived from owner + subaccount)</li>
-                              <li><strong>IRCR-1 Format:</strong> Internet Computer standard format (owner.subaccount)</li>
-                              <li><strong>Short Address:</strong> Compact format for easy use (~26 chars)</li>
-                            </ul>
-                            <p style="margin: 5px 0 0 0; color: #856404; font-size: 0.75rem; font-style: italic;">
-                              💡 All formats represent the same ckBTC account: owner (Principal) + subaccount (32-byte blob)
-                            </p>
-                          </div>
-                          <p style="margin: 10px 0 0 0; color: #e74c3c; font-size: 0.85rem; font-weight: 600;">
-                            ⚠️ Note: These are ckBTC addresses, not Bitcoin addresses. Make sure you're sending ckBTC tokens.
-                          </p>
-                        </div>
-                      ` : html`
-                        <p style="color: #666; font-style: italic;">
-                          ${this.userDepositAccount === null ? 'Failed to load deposit account' : 
-                            this.userDepositAccount && !this.userDepositAccount.owner ? 'Deposit account has no owner' : 
-                            'Loading deposit account...'}
-                        </p>
-                        <p class="address-note">Your unique deposit account will be created when you first connect</p>
-                        <button class="btn-small" @click=${() => this.getUserDepositAccount()}>
-                          Retry Load Account
-                        </button>
-                        <button class="btn-small" @click=${() => this.debugUserStatus()}>
-                          Debug Status
-                        </button>
-                      `}
+        <div class="nav-tabs">
+          <button class="${this.activePage === 'game' ? 'active' : ''}" @click=${() => { this.activePage = 'game'; this.#render(); }}>Game</button>
+          <button class="${this.activePage === 'profile' ? 'active' : ''}" @click=${() => { this.activePage = 'profile'; this.#render(); }}>Profile</button>
+        </div>
+        ${this.activePage === 'game' ? html`
+          <section class="main-right">
+            <div class="round-section">
+              <h2>🎲 Current Lottery Round</h2>
+              ${this.currentRound ? html`
+                <div class="round-info">
+                  <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;">
+                    <h3 style="margin: 0 0 10px 0; font-size: 1.5rem;">Round #${this.currentRound.id}</h3>
+                    <div style="font-size: 2rem; font-weight: bold; margin: 10px 0; color: #ffd700;">
+                      🏆 ${this.formatBalance(this.currentRound.prize_pool)}
                     </div>
-                    
-                    <div class="balance-actions">
-                      <button 
-                        class="btn btn-secondary" 
-                        @click=${this.updateBalance.bind(this)}
-                        ?disabled=${this.loading}
-                        style="width: 100%; margin-bottom: 1rem;"
-                      >
-                        ${this.loading ? 'Updating...' : 'Update Balance'}
-                      </button>
+                    <p style="margin: 5px 0; opacity: 0.9;">Prize Pool</p>
+                  </div>
+                  
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; text-align: center;">
+                      <div style="font-size: 1.5rem; font-weight: bold; color: #2e7d32;">
+                        ${(this.currentRound.participants || []).length}
+                      </div>
+                      <div style="font-size: 0.9rem; color: #666;">Total Bets</div>
                     </div>
-                    
-                    <div class="withdraw-section">
-                      <h4>Withdraw Funds</h4>
-                      <div class="withdraw-form">
-                        <input 
-                          type="number" 
-                          class="input" 
-                          placeholder="Amount in ckBTC" 
-                          .value=${this.withdrawAmount}
-                          @input=${(e) => this.withdrawAmount = e.target.value}
-                          step="0.00000001"
-                          min="0"
-                        />
-                        <button 
-                          class="btn btn-secondary" 
-                          @click=${this.withdrawBalance.bind(this)}
-                          ?disabled=${this.loading || !this.withdrawAmount}
-                          style="width: 100%; margin-top: 0.5rem;"
-                        >
-                          ${this.loading ? 'Withdrawing...' : 'Withdraw'}
-                        </button>
+                    <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; text-align: center;">
+                      <div style="font-size: 1.5rem; font-weight: bold; color: #1976d2;">
+                        ${new Set((this.currentRound.participants || []).map(p => p.toString())).size}
+                      </div>
+                      <div style="font-size: 0.9rem; color: #666;">Unique Players</div>
+                    </div>
+                  </div>
+                  
+                  <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #ff9800;">
+                    <div style="text-align: center; margin-bottom: 10px;">
+                      <span style="font-size: 0.9rem; color: #e65100;">⏰ Round Timer</span>
+                    </div>
+                    <div style="text-align: center; font-size: 1.8rem; font-weight: bold; color: #e65100; font-family: 'Courier New', monospace;">
+                      ${this.countdown || '--:--'}
+                    </div>
+                    <div style="text-align: center; font-size: 0.8rem; color: #e65100; margin-top: 5px;">
+                      ${this.getRoundStatus()}
+                    </div>
+                  </div>
+                  ${(this.currentRound.winners || []).length > 0 ? html`
+                    <div style="background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center; border: 3px solid #ffc107;">
+                      <div style="font-size: 1.2rem; font-weight: bold; color: #b8860b; margin-bottom: 10px;">
+                        🎉 CONGRATULATIONS! 🎉
+                      </div>
+                      <div style="font-size: 1rem; color: #8b6914;">
+                        Winner: ${this.currentRound.winners[0] ? this.formatPrincipal(this.currentRound.winners[0].toString()) : 'Unknown'}
+                      </div>
+                      <div style="font-size: 0.9rem; color: #8b6914; margin-top: 5px;">
+                        Prize: ${this.formatBalance(this.currentRound.prize_pool)}
                       </div>
                     </div>
-                    
-                    <div class="admin-actions">
-                      <button 
-                        class="btn btn-secondary" 
-                        @click=${this.initializeAuth.bind(this)}
-                        ?disabled=${this.loading}
-                        style="width: 100%; margin-top: 1rem;"
-                      >
-                        ${this.loading ? 'Initializing...' : 'Initialize Admin Privileges'}
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div class="transaction-history-personal">
-                    <h3>Transaction History</h3>
-                    ${this.currentUser && this.currentUser.transaction_history && this.currentUser.transaction_history.length > 0
-                      ? html`
-                        <div class="transaction-list-personal">
-                          ${this.currentUser.transaction_history
-                            .slice(-10).reverse().map(tx => html`
-                              <div class="transaction-item-personal ${tx.transaction_type.toLowerCase()}">
-                                <div class="transaction-info-personal">
-                                  <span class="transaction-amount ${tx.transaction_type === 'Win' ? 'winning' : tx.transaction_type === 'Deposit' ? 'deposit' : 'bet'}">
-                                    ${tx.transaction_type === 'Win' ? '+' : tx.transaction_type === 'Deposit' ? '+' : '-'}${this.formatBalance(tx.amount)}
-                                  </span>
-                                  <span class="transaction-type">${tx.transaction_type}</span>
-                                  <span class="transaction-time">${this.formatTimestamp(tx.timestamp)}</span>
-                                </div>
-                              </div>
-                          `)}
+                  ` : ''}
+                  ${this.isConnected ? html`
+                    <div class="round-actions">
+                      <div style="background: linear-gradient(135deg, #4caf50 0%, #45a049 100%); padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;">
+                        <div style="font-size: 1.2rem; font-weight: bold; color: white; margin-bottom: 15px;">
+                          🎯 Place Your Bet
                         </div>
-                      `
-                      : html`<p>No transaction history yet.</p>`
-                    }
-                  </div>
-                  
-                  <div class="winning-history-personal">
-                    <h3>Winning History</h3>
-                    ${this.currentUser && this.currentUser.winning_history && this.currentUser.winning_history.length > 0
-                      ? html`
-                        <div class="winning-list-personal">
-                          ${this.currentUser.winning_history
-                            .slice(-10).reverse().map(win => html`
-                              <div class="winning-item-personal">
-                                <div class="winning-info-personal">
-                                  <span class="winning-amount" style="color: #38a169; font-weight: bold;">+${this.formatBalance(win.amount)}</span>
-                                  <span class="winning-time">${this.formatTimestamp(win.timestamp)}</span>
-                                  <span class="winning-round">Round ${win.round_id}</span>
-                                </div>
-                              </div>
-                          `)}
-                        </div>
-                      `
-                      : html`<p>No winning history yet.</p>`
-                    }
-                  </div>
-                </div>
-              `}
-            </section>
-            <section class="main-right">
-              <div class="round-section">
-                <h2>Current Round</h2>
-                ${this.currentRound ? html`
-                  <div class="round-info">
-                    <p><strong>Round ID:</strong> ${this.currentRound.id}</p>
-                    <p><strong>Prize Pool:</strong> ${this.formatBalance(this.currentRound.prize_pool)}</p>
-                    <p><strong>Participants:</strong> ${(this.currentRound.participants || []).length} people</p>
-                    <p><strong>Start Time:</strong> ${this.formatTimestamp(this.currentRound.start_time)}</p>
-                    <p><strong>End Time:</strong> ${this.formatTimestamp(this.currentRound.end_time)}</p>
-                    <div class="countdown">
-                      <span class="countdown-label">Remaining Time:</span>
-                      <span class="countdown-time">${this.countdown || '--:--'}</span>
-                    </div>
-                    ${(this.currentRound.winners || []).length > 0 ? html`
-                      <p><strong>Winner:</strong> ${this.currentRound.winners[0] ? this.currentRound.winners[0].toString() : 'Unknown'}</p>
-                    ` : ''}
-                    
-                    ${this.isConnected ? html`
-                      <div class="round-actions">
                         <button 
                           class="btn btn-primary" 
                           @click=${this.placeBet.bind(this)}
                           ?disabled=${this.loading}
-                          style="width: 100%; margin-bottom: 1rem;"
+                          style="width: 100%; margin-bottom: 15px; background: white; color: #4caf50; border: none; font-weight: bold; font-size: 1.1rem; padding: 15px; border-radius: 8px;"
                         >
-                          ${this.loading ? 'Placing Bet...' : 'Place Bet (0.00000001 ckBTC)'}
+                          ${this.loading ? '🎲 Placing Bet...' : '🎲 Place Bet (0.00000001 ckBTC)'}
                         </button>
-                        
-                        ${this.isAdmin ? html`
-                          <button 
-                            class="btn btn-secondary" 
-                            @click=${this.triggerDraw.bind(this)}
-                            ?disabled=${this.loading}
-                            style="width: 100%;"
-                          >
-                            ${this.loading ? 'Triggering Draw...' : 'Trigger Draw (Admin)'}
-                          </button>
-                        ` : ''}
+                        <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+                          <div style="font-size: 1rem; color: white; font-weight: bold;">
+                            💰 Remaining Bets: ${this.currentUser && this.currentUser.balance ? Math.floor(Number(this.currentUser.balance) / 1) : 0}
+                          </div>
+                        </div>
+                                              <div style="background: rgba(255,255,255,0.9); padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.9rem; color: #333;">
+                          <p style="margin: 0 0 8px 0; font-weight: bold; color: #2e7d32;">💡 Betting Strategy</p>
+                          <ul style="margin: 0; padding-left: 20px; font-size: 0.85rem; color: #555;">
+                            <li>🎯 Multiple bets increase your winning chances</li>
+                            <li>💰 Each bet costs only 0.00000001 ckBTC</li>
+                            <li>🏆 More bets = higher probability to win the prize pool</li>
+                            <li>⚡ Place as many bets as you can afford!</li>
+                          </ul>
+                          ${this.isConnected ? html`
+                            <div style="margin-top: 10px; padding: 10px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196f3;">
+                              <p style="margin: 0; font-size: 0.9rem; color: #1976d2; font-weight: bold;">
+                                🎲 Your bets this round: ${this.getUserBetCount()} 
+                                ${this.getUserBetCount() === 1 ? 'bet' : 'bets'}
+                              </p>
+                            </div>
+                          ` : ''}
+                        </div>
+                      ${this.isAdmin ? html`
+                        <button 
+                          class="btn btn-secondary" 
+                          @click=${this.triggerDraw.bind(this)}
+                          ?disabled=${this.loading}
+                          style="width: 100%; margin-top: 15px; background: #ff9800; color: white; border: none; font-weight: bold; padding: 12px; border-radius: 8px;"
+                        >
+                          ${this.loading ? '🎲 Triggering Draw...' : '🎲 Trigger Draw (Admin Only)'}
+                        </button>
+                      ` : html`
+                        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; text-align: center; border-left: 4px solid #ffc107;">
+                          <div style="font-size: 0.9rem; color: #856404;">
+                            🔒 Admin access required to trigger draw
+                          </div>
+                        </div>
+                      `}
+                    </div>
+                  ` : html`
+                    <div style="background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%); padding: 30px; border-radius: 12px; text-align: center; border: 2px dashed #ccc;">
+                      <div style="font-size: 2rem; margin-bottom: 15px;">🔐</div>
+                      <div style="font-size: 1.2rem; font-weight: bold; color: #666; margin-bottom: 10px;">
+                        Login Required
                       </div>
-                    ` : html`
-                      <p style="color: #666; font-style: italic;">Please login to participate in the lottery</p>
-                    `}
+                      <div style="font-size: 0.9rem; color: #888;">
+                        Please login to participate in the lottery and place your bets!
+                      </div>
+                    </div>
+                  `}
+                </div>
+              ` : html`
+                <div style="background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%); padding: 40px; border-radius: 12px; text-align: center; border: 2px dashed #ccc;">
+                  <div style="font-size: 3rem; margin-bottom: 20px;">🔄</div>
+                  <div style="font-size: 1.2rem; font-weight: bold; color: #666; margin-bottom: 10px;">
+                    Loading Round Info
                   </div>
-                ` : html`<p>Loading round info...</p>`}
-              </div>
-              
-              ${this.systemStats ? html`
-                <div class="stats-section">
-                  <h2>System Statistics</h2>
-                  <div class="stats-info">
-                    <p><strong>Total Rounds:</strong> ${this.systemStats.total_rounds}</p>
-                    <p><strong>Total Bets:</strong> ${this.systemStats.total_bets}</p>
-                    <p><strong>Total Winnings:</strong> ${this.formatBalance(this.systemStats.total_winnings)}</p>
-                    <p><strong>Active Users:</strong> ${this.systemStats.active_users}</p>
-                    <p><strong>Total ckBTC Deposits:</strong> ${this.formatBalance(this.systemStats.total_ckbtc_deposits)}</p>
+                  <div style="font-size: 0.9rem; color: #888;">
+                    Please wait while we fetch the latest lottery round...
                   </div>
                 </div>
-              ` : ''}
-            </section>
-      </main>
-        </div>
+              `}
+            </div>
+            ${this.systemStats ? html`
+              <div class="stats-section">
+                <h2>📊 System Statistics</h2>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                  <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: bold; color: #2e7d32;">
+                      ${this.systemStats.total_rounds}
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666;">Total Rounds</div>
+                  </div>
+                  <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: bold; color: #1976d2;">
+                      ${this.systemStats.total_bets}
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666;">Total Bets</div>
+                  </div>
+                  <div style="background: #fff3e0; padding: 15px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: bold; color: #f57c00;">
+                      ${this.formatBalance(this.systemStats.total_winnings)}
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666;">Total Winnings</div>
+                  </div>
+                  <div style="background: #fce4ec; padding: 15px; border-radius: 8px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: bold; color: #c2185b;">
+                      ${this.systemStats.active_users}
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666;">Active Users</div>
+                  </div>
+                </div>
+                <div style="background: #f3e5f5; padding: 15px; border-radius: 8px; margin-top: 15px; text-align: center;">
+                  <div style="font-size: 1.2rem; font-weight: bold; color: #7b1fa2;">
+                    💰 Total ckBTC Deposits: ${this.formatBalance(this.systemStats.total_ckbtc_deposits)}
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+          </section>
+        ` : html`
+          <section class="profile-section" style="max-width: 600px; margin: 0 auto; padding: 24px 0;">
+            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+              <h2 style="margin-bottom: 18px;">👤 My Profile</h2>
+              <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
+                <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Principal:</span>
+                <span class="profile-value" style="font-family: monospace; font-size: 1.1em; margin-right: 8px;">${this.userPrincipal ? this.formatPrincipal(this.userPrincipal.toString()) : '--'}</span>
+                <button class="btn-small copy-btn" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #f3f3f3; cursor: pointer;" @click=${() => this.copyPrincipal(this.userPrincipal)}>Copy</button>
+              </div>
+              <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
+                <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Balance:</span>
+                <span class="profile-balance" style="font-family: monospace; color: #38a169; font-weight: bold; font-size: 1.3em; margin-right: 8px;">${this.currentUser ? this.formatBalance(this.currentUser.balance) : '0.00000000 ckBTC'}</span>
+                <button class="btn-small" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #e3f2fd; color: #1976d2; cursor: pointer;" @click=${this.updateBalance.bind(this)} ?disabled=${this.loading}>${this.loading ? 'Refreshing...' : '🔄 Refresh'}</button>
+              </div>
+              <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
+                <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Deposit Address:</span>
+                <span class="profile-value" style="font-family: monospace; font-size: 1.1em; margin-right: 8px;">${this.generateCkBtcAddress() || '--'}</span>
+                <button class="btn-small copy-btn" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #f3f3f3; cursor: pointer;" @click=${() => this.copyPrincipal(this.generateCkBtcAddress())}>Copy</button>
+              </div>
+            </div>
+
+            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+              <h3 style="margin-bottom: 14px;">💸 Withdraw</h3>
+              <input type="number" placeholder="Amount (ckBTC)" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px;" @input=${(e) => this.withdrawAmount = e.target.value} />
+              <button class="btn btn-warning" style="width: 100%;" @click=${this.withdrawBalance.bind(this)} ?disabled=${this.loading || !this.withdrawAmount}>${this.loading ? 'Withdrawing...' : 'Withdraw'}</button>
+            </div>
+
+            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+              <h3 style="margin-bottom: 14px;">📜 Recent Transactions</h3>
+              ${this.currentUser && this.currentUser.transaction_history && this.currentUser.transaction_history.length > 0
+                ? html`
+                  <ul class="tx-list" style="list-style: none; padding: 0; margin: 0;">
+                    ${this.currentUser.transaction_history.slice(-5).reverse().map(tx => html`
+                      <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
+                        <span class="tx-type" style="color: #888;">${tx.transaction_type}</span>
+                        <span class="tx-amount" style="color: #1976d2; font-weight: bold;">${this.formatBalance(tx.amount)}</span>
+                        <span class="tx-time" style="color: #aaa;">${this.formatTimestamp(tx.timestamp)}</span>
+                      </li>
+                    `)}
+                  </ul>
+                `
+                : html`<p style="color: #aaa;">No transactions yet.</p>`
+              }
+            </div>
+
+            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+              <h3 style="margin-bottom: 14px;">🏆 Winning History</h3>
+              ${this.currentUser && this.currentUser.winning_history && this.currentUser.winning_history.length > 0
+                ? html`
+                  <ul class="win-list" style="list-style: none; padding: 0; margin: 0;">
+                    ${this.currentUser.winning_history.slice(-5).reverse().map(win => html`
+                      <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
+                        <span class="win-amount" style="color: #e67e22; font-weight: bold;">${this.formatBalance(win.amount)}</span>
+                        <span class="win-time" style="color: #aaa;">${this.formatTimestamp(win.timestamp)}</span>
+                        <span class="win-round" style="color: #888;">Round ${win.round_id}</span>
+                      </li>
+                    `)}
+                  </ul>
+                `
+                : html`<p style="color: #aaa;">No winnings yet.</p>`
+              }
+            </div>
+          </section>
+        `}
       `, document.getElementById('app'));
     });
   }
@@ -1340,3 +1776,127 @@ window.addEventListener('error', (event) => {
 
 // Initialize the app when the module loads
 new App();
+
+// 在文件末尾追加移动端适配样式
+const style = document.createElement('style');
+style.innerHTML = `
+@media (max-width: 600px) {
+  body, .container, .dashboard-personal, .wallet-details-personal, .round-section, .bet-section, .deposit-account-info, .explanation, .comparison {
+    padding: 8px !important;
+    font-size: 16px !important;
+  }
+  .address-display, .address-code, code, .principal-id, .address-label {
+    font-size: 14px !important;
+    word-break: break-all !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    display: block !important;
+  }
+  .btn, button, .btn-small, .btn-primary, .btn-secondary, .copy-btn {
+    min-height: 44px !important;
+    font-size: 16px !important;
+    width: 100% !important;
+    margin-bottom: 10px !important;
+    padding: 12px 0 !important;
+  }
+  .deposit-account-info, .explanation, .comparison {
+    padding: 10px !important;
+    font-size: 15px !important;
+  }
+  .mobile-login-tip {
+    font-size: 15px !important;
+    padding: 8px 0 !important;
+  }
+  .address-details, .deposit-instructions {
+    font-size: 14px !important;
+    padding: 8px !important;
+  }
+  .main-flex, .main-left, .main-right {
+    flex-direction: column !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 0 !important;
+  }
+  .transaction-item-personal, .winning-item-personal, .deposit-item-personal {
+    font-size: 14px !important;
+    padding: 10px !important;
+  }
+}
+`;
+document.head.appendChild(style);
+
+// 样式追加
+const styleTab = document.createElement('style');
+styleTab.innerHTML = `
+.nav-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.nav-tabs button {
+  flex: 1;
+  padding: 12px 0;
+  font-size: 16px;
+  border: none;
+  background: #eee;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+}
+.nav-tabs button.active {
+  background: #3498db;
+  color: #fff;
+  font-weight: bold;
+}
+
+.account-consolidation {
+  background: #f8f9fa;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.account-consolidation h3 {
+  margin: 0 0 16px 0;
+  color: #495057;
+  font-size: 18px;
+}
+
+.btn-warning {
+  background: #ffc107;
+  color: #212529;
+  border: 1px solid #ffc107;
+}
+
+.btn-warning:hover {
+  background: #e0a800;
+  border-color: #d39e00;
+}
+
+.btn-warning:disabled {
+  background: #ffc107;
+  opacity: 0.6;
+}
+
+.btn-info {
+  background: #17a2b8;
+  color: #fff;
+  border: 1px solid #17a2b8;
+}
+
+.btn-info:hover {
+  background: #138496;
+  border-color: #117a8b;
+}
+
+.btn-info:disabled {
+  background: #17a2b8;
+  opacity: 0.6;
+}
+
+.admin-actions h3 {
+  margin: 0 0 16px 0;
+  color: #495057;
+  font-size: 18px;
+}
+`;
+document.head.appendChild(styleTab);

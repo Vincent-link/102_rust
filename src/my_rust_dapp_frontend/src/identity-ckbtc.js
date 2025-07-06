@@ -129,6 +129,12 @@ class IdentityCkBtcManager {
           this.isConnected = true;
           this.provider = 'internet-identity';
           console.log('Connected with existing Internet Identity:', this.principal);
+          
+          // 保存会话状态到 localStorage
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing connection:', this.principal);
+          
           return { success: true, principal: this.principal, provider: this.provider };
         }
       }
@@ -155,12 +161,10 @@ class IdentityCkBtcManager {
       this.provider = 'internet-identity';
       console.log('Connected with real Internet Identity:', this.principal);
       
-      // 保存会话状态到 localStorage（特别是移动端 Safari）
-      if (isMobile && isSafari) {
-        localStorage.setItem('ic_principal', this.principal);
-        localStorage.setItem('ic_provider', this.provider);
-        console.log('Saved session state to localStorage for Mobile Safari');
-      }
+      // 保存会话状态到 localStorage（适用于所有环境）
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage:', this.principal);
       
       return { success: true, principal: this.principal, provider: this.provider };
     } catch (error) {
@@ -193,6 +197,12 @@ class IdentityCkBtcManager {
           this.isConnected = true;
           this.provider = 'internet-identity';
           console.log('Connected with existing Internet Identity in Mobile Safari:', this.principal);
+          
+          // 保存会话状态到 localStorage
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Mobile Safari connection:', this.principal);
+          
           return { success: true, principal: this.principal, provider: this.provider };
         }
       }
@@ -239,6 +249,12 @@ class IdentityCkBtcManager {
       this.isConnected = true;
       this.provider = 'internet-identity';
       console.log('Connected with Internet Identity in Mobile Safari:', this.principal);
+      
+      // 保存会话状态到 localStorage
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Mobile Safari:', this.principal);
+      
       return { success: true, principal: this.principal, provider: this.provider };
     } catch (error) {
       console.error('Mobile Safari authentication failed:', error);
@@ -294,6 +310,11 @@ class IdentityCkBtcManager {
               
               console.log('Connected with Internet Identity:', this.principal);
               
+              // 保存会话状态到 localStorage
+              localStorage.setItem('ic_principal', this.principal);
+              localStorage.setItem('ic_provider', this.provider);
+              console.log('Saved session state to localStorage:', this.principal);
+              
               resolve({
                 success: true,
                 principal: this.principal,
@@ -328,7 +349,10 @@ class IdentityCkBtcManager {
       this.isConnected = false;
       this.provider = null;
       
-      console.log('Disconnected from identity');
+      // 清除 localStorage 中的会话状态
+      localStorage.removeItem('ic_principal');
+      localStorage.removeItem('ic_provider');
+      console.log('Disconnected from identity and cleared localStorage');
       
       return { success: true };
     } catch (error) {
@@ -564,6 +588,24 @@ class IdentityCkBtcManager {
             provider: this.provider
           };
         }
+      }
+      
+      // 通用会话恢复：尝试从 localStorage 恢复（适用于所有环境）
+      console.log('Checking localStorage for saved session...');
+      const savedPrincipal = localStorage.getItem('ic_principal');
+      const savedProvider = localStorage.getItem('ic_provider');
+      
+      if (savedPrincipal && savedPrincipal !== '2vxsx-fae') {
+        console.log('Found saved principal in localStorage:', savedPrincipal);
+        this.principal = savedPrincipal;
+        this.provider = savedProvider || 'internet-identity';
+        this.isConnected = true;
+        
+        return {
+          isConnected: true,
+          principal: this.principal,
+          provider: this.provider
+        };
       }
       
       console.log('No valid connection found');

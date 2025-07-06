@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiple Bets Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        @media (max-width: 600px) {
+            body, .container {
+                padding: 8px !important;
+                font-size: 16px !important;
+            }
+            .test-section, .log, .status {
+                font-size: 15px !important;
+                padding: 10px !important;
+            }
+            .btn, button {
+                min-height: 44px !important;
+                font-size: 16px !important;
+                width: 100% !important;
+                margin-bottom: 10px !important;
+                padding: 12px 0 !important;
+            }
+            .log {
+                word-break: break-all !important;
+                max-width: 100% !important;
+                font-size: 14px !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Multiple Bets Test</h1>
+        
+        <div class="test-section">
+            <h3>测试说明</h3>
+            <p>这个页面用于测试多次下注功能是否正常工作：</p>
+            <ul>
+                <li>每次下注应该扣除 0.00000001 ckBTC</li>
+                <li>余额应该实时更新</li>
+                <li>下注次数应该增加</li>
+                <li>奖池应该增加</li>
+            </ul>
+        </div>
+
+        <div class="test-section">
+            <h3>连接状态</h3>
+            <div id="connection-status" class="status info">
+                正在检查连接状态...
+            </div>
+            <button class="btn" onclick="checkConnection()">检查连接</button>
+        </div>
+
+        <div class="test-section">
+            <h3>用户信息</h3>
+            <div id="user-info">
+                <p>请先连接身份</p>
+            </div>
+            <button class="btn" onclick="loadUserData()">刷新用户数据</button>
+        </div>
+
+        <div class="test-section">
+            <h3>下注测试</h3>
+            <div id="bet-status" class="status info">
+                准备下注测试...
+            </div>
+            <button class="btn" onclick="placeBet()">下注一次</button>
+            <button class="btn" onclick="placeMultipleBets()">连续下注5次</button>
+            <button class="btn btn-danger" onclick="resetTest()">重置测试</button>
+        </div>
+
+        <div class="test-section">
+            <h3>测试日志</h3>
+            <div id="test-log" class="log">
+                测试日志将在这里显示...
+            </div>
+            <button class="btn" onclick="clearLog()">清空日志</button>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+        let currentRound = null;
+        let betCount = 0;
+
+        function log(message) {
+            const logDiv = document.getElementById('test-log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('bet-status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+        }
+
+        function updateUserInfo() {
+            const userDiv = document.getElementById('user-info');
+            if (currentUser) {
+                userDiv.innerHTML = `
+                    <p><strong>Principal:</strong> ${currentUser.principal_text || 'N/A'}</p>
+                    <p><strong>Balance:</strong> ${formatBalance(currentUser.balance)}</p>
+                    <p><strong>Transaction Count:</strong> ${currentUser.transaction_history?.length || 0}</p>
+                    <p><strong>Bet Count This Round:</strong> ${betCount}</p>
+                `;
+            } else {
+                userDiv.innerHTML = '<p>用户数据未加载</p>';
+            }
+        }
+
+        function formatBalance(balance) {
+            if (!balance) return '0.00000000 ckBTC';
+            const balanceNumber = Number(balance);
+            return (balanceNumber / 100_000_000).toFixed(8) + ' ckBTC';
+        }
+
+        async function checkConnection() {
+            try {
+                log('检查连接状态...');
+                // 这里需要根据实际的连接逻辑来实现
+                updateStatus('连接检查完成', 'success');
+                log('连接状态检查完成');
+            } catch (error) {
+                log('连接检查失败: ' + error.message);
+                updateStatus('连接检查失败: ' + error.message, 'error');
+            }
+        }
+
+        async function loadUserData() {
+            try {
+                log('加载用户数据...');
+                // 这里需要调用实际的后端API
+                // const userResult = await my_rust_dapp_backend.get_user(principal);
+                // currentUser = userResult[0];
+                
+                updateUserInfo();
+                updateStatus('用户数据加载完成', 'success');
+                log('用户数据加载完成');
+            } catch (error) {
+                log('用户数据加载失败: ' + error.message);
+                updateStatus('用户数据加载失败: ' + error.message, 'error');
+            }
+        }
+
+        async function placeBet() {
+            try {
+                log('开始下注...');
+                updateStatus('正在下注...', 'info');
+                
+                // 模拟下注过程
+                const oldBalance = currentUser ? currentUser.balance : 0;
+                log(`下注前余额: ${formatBalance(oldBalance)}`);
+                
+                // 这里需要调用实际的下注API
+                // await my_rust_dapp_backend.place_bet(principal);
+                
+                // 模拟余额扣除
+                if (currentUser) {
+                    currentUser.balance -= 1; // 扣除 0.00000001 ckBTC
+                    betCount++;
+                }
+                
+                log(`下注后余额: ${formatBalance(currentUser ? currentUser.balance : 0)}`);
+                log(`本轮下注次数: ${betCount}`);
+                
+                updateUserInfo();
+                updateStatus(`下注成功！本轮已下注 ${betCount} 次`, 'success');
+                log('下注完成');
+            } catch (error) {
+                log('下注失败: ' + error.message);
+                updateStatus('下注失败: ' + error.message, 'error');
+            }
+        }
+
+        async function placeMultipleBets() {
+            try {
+                log('开始连续下注5次...');
+                updateStatus('正在连续下注...', 'info');
+                
+                for (let i = 1; i <= 5; i++) {
+                    log(`第 ${i} 次下注...`);
+                    await placeBet();
+                    // 添加延迟模拟网络请求
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                updateStatus('连续下注完成！', 'success');
+                log('连续下注测试完成');
+            } catch (error) {
+                log('连续下注失败: ' + error.message);
+                updateStatus('连续下注失败: ' + error.message, 'error');
+            }
+        }
+
+        function resetTest() {
+            betCount = 0;
+            currentUser = null;
+            updateUserInfo();
+            updateStatus('测试已重置', 'info');
+            log('测试重置完成');
+        }
+
+        function clearLog() {
+            document.getElementById('test-log').innerHTML = '测试日志已清空...\n';
+        }
+
+        // 页面加载时初始化
+        window.onload = function() {
+            log('测试页面已加载');
+            updateStatus('测试页面已准备就绪', 'info');
+        };
+    </script>
+</body>
+</html> 

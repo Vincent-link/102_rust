@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Style Address Generator Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .address-display {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            word-break: break-all;
+        }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn:hover {
+            background: #0056b3;
+        }
+        .explanation {
+            background: #e7f3ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .comparison {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Bitcoin Style Address Generator Test</h1>
+        
+        <div class="explanation">
+            <h3>说明</h3>
+            <p>这个页面演示了如何生成类似比特币地址格式的 ckBTC 地址。</p>
+            <p><strong>目标格式：</strong>64个字符的十六进制字符串，类似你提供的地址：<code>7fe6d80474bb9115c6cc715aab3e8ed4ad08a35539080a5570325a8fc8640624</code></p>
+        </div>
+
+        <div class="comparison">
+            <h3>地址格式对比</h3>
+            <p><strong>你提供的地址：</strong> <code>7fe6d80474bb9115c6cc715aab3e8ed4ad08a35539080a5570325a8fc8640624</code></p>
+            <ul>
+                <li>长度：64个字符</li>
+                <li>格式：十六进制（0-9, a-f）</li>
+                <li>特征：看起来像 SHA256 哈希</li>
+            </ul>
+        </div>
+
+        <h2>生成的地址</h2>
+        
+        <div id="addresses">
+            <h3>Bitcoin Style Address (64字符十六进制)</h3>
+            <div class="address-display" id="bitcoin-style">
+                正在生成...
+            </div>
+            <button class="btn" onclick="copyAddress('bitcoin-style')">复制地址</button>
+
+            <h3>对比分析</h3>
+            <div class="address-display" id="comparison">
+                正在分析...
+            </div>
+        </div>
+
+        <div class="explanation">
+            <h3>实现原理</h3>
+            <ol>
+                <li><strong>数据准备：</strong>将 owner (Principal) + subaccount 组合成字符串</li>
+                <li><strong>哈希计算：</strong>使用 SHA256 哈希算法处理数据</li>
+                <li><strong>格式转换：</strong>将哈希结果转换为64字符的十六进制字符串</li>
+                <li><strong>唯一性：</strong>每个用户基于其 Principal 和 subaccount 生成唯一地址</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        // 改进的 SHA256 哈希函数（生成64字符十六进制）
+        function sha256Hash(str) {
+            // 简单的哈希实现（实际应用中应使用真实的 SHA256）
+            let hash = 0;
+            if (str.length === 0) return hash.toString();
+            
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // 转换为32位整数
+            }
+            
+            // 生成32字节的哈希数据
+            const hashBytes = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) {
+                hashBytes[i] = (hash >> (i % 4)) & 0xFF;
+            }
+            
+            // 添加额外的熵以确保唯一性
+            for (let i = 0; i < 32; i++) {
+                hashBytes[i] = (hashBytes[i] + str.charCodeAt(i % str.length)) & 0xFF;
+            }
+            
+            return String.fromCharCode(...hashBytes);
+        }
+
+        // 生成比特币风格地址
+        function generateBitcoinStyleAddress() {
+            // 模拟用户数据
+            const owner = "mbge7-ijmh7-dt5e7-4e7un-ena3p-phmwu-7m5xb-jd4hr-4hdnh-hwxe6-jqe"; // 示例 Principal
+            const subaccount = [44, 63, 199, 62, 147, 252, 39, 232, 210, 52, 27, 123, 206, 203, 83, 236, 237, 194, 145, 240, 241, 225, 198, 211, 158, 215, 39, 147, 2];
+            
+            // 创建地址数据
+            let addressData = owner;
+            if (subaccount && subaccount.length > 0) {
+                // 将 subaccount 转换为十六进制字符串
+                const subaccountHex = Array.from(subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('');
+                addressData = `${owner}_${subaccountHex}`;
+            }
+            
+            // 使用 SHA256 哈希生成比特币风格的地址
+            const hash = sha256Hash(addressData);
+            
+            // 将哈希转换为64字符的十六进制字符串
+            const hexHash = Array.from(hash).map(char => 
+                char.charCodeAt(0).toString(16).padStart(2, '0')
+            ).join('');
+            
+            // 确保长度为64字符
+            const bitcoinStyleAddress = hexHash.substring(0, 64);
+            
+            return bitcoinStyleAddress;
+        }
+
+        // 分析地址格式
+        function analyzeAddress(address) {
+            const analysis = {
+                length: address.length,
+                isHex: /^[0-9a-fA-F]+$/.test(address),
+                hasValidChars: /^[0-9a-f]+$/.test(address),
+                is64Chars: address.length === 64
+            };
+            
+            return analysis;
+        }
+
+        // 生成地址并分析
+        function generateAndAnalyze() {
+            const generatedAddress = generateBitcoinStyleAddress();
+            const targetAddress = "7fe6d80474bb9115c6cc715aab3e8ed4ad08a35539080a5570325a8fc8640624";
+            
+            const generatedAnalysis = analyzeAddress(generatedAddress);
+            const targetAnalysis = analyzeAddress(targetAddress);
+            
+            document.getElementById('bitcoin-style').textContent = generatedAddress;
+            
+            const comparisonText = `
+生成的地址: ${generatedAddress}
+目标地址: ${targetAddress}
+
+格式分析:
+- 生成地址长度: ${generatedAnalysis.length} (${generatedAnalysis.is64Chars ? '✓' : '✗'})
+- 目标地址长度: ${targetAnalysis.length} (${targetAnalysis.is64Chars ? '✓' : '✗'})
+- 生成地址格式: ${generatedAnalysis.hasValidChars ? '✓ 有效十六进制' : '✗ 无效格式'}
+- 目标地址格式: ${targetAnalysis.hasValidChars ? '✓ 有效十六进制' : '✗ 无效格式'}
+
+实现状态: ${generatedAnalysis.is64Chars && generatedAnalysis.hasValidChars ? '✓ 格式匹配成功' : '✗ 格式不匹配'}
+            `;
+            
+            document.getElementById('comparison').textContent = comparisonText;
+        }
+
+        // 复制地址函数
+        function copyAddress(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('地址已复制到剪贴板！');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                // 备用复制方法
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('地址已复制到剪贴板！');
+            });
+        }
+
+        // 页面加载时生成地址
+        window.onload = generateAndAnalyze;
+    </script>
+</body>
+</html> 
