@@ -440,12 +440,12 @@ fn auto_draw_winner() {
 
         // 创建新轮次
         let new_round = Round {
-            id: winner.id + 1,
-            participants: vec![],
-            prize_pool: 0,
-            start_time: time(),
-            end_time: time() + ROUND_DURATION,
-            winners: vec![],
+                id: winner.id + 1,
+                participants: vec![],
+                prize_pool: 0,
+                start_time: time(),
+                end_time: time() + ROUND_DURATION,
+                winners: vec![],
         };
         
         CURRENT_ROUND.with(|r| {
@@ -839,45 +839,45 @@ pub async fn withdraw_balance(principal_str: String, amount: u64) -> Result<Stri
             created_at_time: Some(time()),
         };
         
-        match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
-            Ok((result,)) => {
-                match result {
-                    TransferResult::Ok(block_index) => {
+            match ic_cdk::call::<_, (TransferResult,)>(ckbtc_canister, "icrc1_transfer", (transfer_args,)).await {
+                Ok((result,)) => {
+                    match result {
+                        TransferResult::Ok(block_index) => {
                         ic_cdk::println!("✅ [WITHDRAW] Withdrawal from treasury successful! Block index: {}", block_index);
-                        
-                        // 更新用户余额
-                        USERS.with(|users| {
-                            let mut users_ref = users.borrow_mut();
-                            if let Some(user) = users_ref.get_mut(&requested_principal) {
-                                user.balance -= amount;
-                                
-                                // 记录提现交易
-                                user.transaction_history.push(Transaction {
-                                    amount,
-                                    timestamp: time(),
-                                    transaction_type: "Withdraw".to_string(),
-                                    tx_hash: Some(format!("withdraw_{}", block_index)),
+                            
+                            // 更新用户余额
+                            USERS.with(|users| {
+                                let mut users_ref = users.borrow_mut();
+                                if let Some(user) = users_ref.get_mut(&requested_principal) {
+                                    user.balance -= amount;
+                                    
+                                    // 记录提现交易
+                                    user.transaction_history.push(Transaction {
+                                        amount,
+                                        timestamp: time(),
+                                        transaction_type: "Withdraw".to_string(),
+                                        tx_hash: Some(format!("withdraw_{}", block_index)),
                                     ckbtc_address: Some(format!("Treasury: {:?}", treasury_account)),
-                                });
-                            }
-                        });
+                                    });
+                                }
+                            });
                         
                         // 保存数据到稳定存储
                         save_to_stable_storage();
                         
                         Ok(format!("Withdrawal successful! Block index: {}", block_index))
-                    },
-                    TransferResult::Err(error) => {
+                        },
+                        TransferResult::Err(error) => {
                         ic_cdk::println!("❌ [WITHDRAW] Transfer from treasury failed: {:?}", error);
                         Err(format!("Transfer from treasury failed: {:?}", error))
+                        }
                     }
-                }
-            },
-            Err(error) => {
-                ic_cdk::println!("❌ [WITHDRAW] Call to ckBTC canister failed: {:?}", error);
+                },
+                Err(error) => {
+                    ic_cdk::println!("❌ [WITHDRAW] Call to ckBTC canister failed: {:?}", error);
                 Err(format!("Call to ckBTC canister failed: {:?}", error))
+                }
             }
-        }
     } else {
         Err("User not found".to_string())
     }
