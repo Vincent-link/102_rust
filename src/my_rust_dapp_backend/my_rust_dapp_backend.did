@@ -91,7 +91,7 @@ service : {
   get_stats : () -> (SystemStats) query;
   get_canister_address : () -> (text) query;
   record_ckbtc_deposit : (text, nat64) -> ();
-  receive_ckbtc_transfer : (nat64, text) -> ();
+  receive_ckbtc_transfer : (nat64, text) -> (variant { Ok : text; Err : text });
   get_user_ckbtc_balance : (principal) -> (nat);
   check_ckbtc_deposits : () -> ();
   get_user_ckbtc_deposits : (principal) -> (vec CkBtcDeposit) query;
@@ -103,4 +103,13 @@ service : {
   get_all_users_debug : () -> (vec text) query;
   get_ckbtc_account_balance : (text, opt text) -> (variant { Ok : nat64; Err : text });
   get_user_all_balances : (text) -> (variant { Ok : vec record { text; nat64 }; Err : text });
+  // Treasury related methods
+  get_treasury_balance : () -> (variant { Ok : nat64; Err : text });
+  get_treasury_account : () -> (Account) query;
+  get_treasury_info : () -> (variant { Ok : text; Err : text }) query;
+  admin_transfer_to_treasury : (text, nat64) -> (variant { Ok : text; Err : text });
+  // Admin consolidation methods
+  auto_consolidate_all_accounts : () -> (variant { Ok : text; Err : text });
+  // Manual trigger methods
+  manual_trigger_round_auto_start : () -> (variant { Ok : text; Err : text });
 };

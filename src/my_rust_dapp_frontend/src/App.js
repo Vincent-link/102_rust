@@ -29,8 +29,25 @@ class App {
     // 移动端环境检测
     this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     this.isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+    this.isFirefox = /Firefox/.test(navigator.userAgent);
+    this.isEdge = /Edg/.test(navigator.userAgent);
+    this.isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
     this.isWeChat = /MicroMessenger/i.test(navigator.userAgent);
     this.isQQ = /QQ/i.test(navigator.userAgent);
+    
+    // 浏览器兼容性检测
+    this.browserInfo = {
+      isMobile: this.isMobile,
+      isSafari: this.isSafari,
+      isFirefox: this.isFirefox,
+      isEdge: this.isEdge,
+      isChrome: this.isChrome,
+      isWeChat: this.isWeChat,
+      isQQ: this.isQQ,
+      userAgent: navigator.userAgent
+    };
+    
+    console.log('Browser detection:', this.browserInfo);
     
     this.activePage = 'game'; // 'game' or 'profile'
     
@@ -56,6 +73,21 @@ class App {
   async init() {
     try {
       console.log('Initializing app...');
+      
+      // Safari 移动端特殊处理：检查URL参数
+      if (this.isMobile && this.isSafari) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const safariReturn = urlParams.get('safari_return');
+        if (safariReturn === 'true') {
+          console.log('Detected Safari return from manual login');
+          // 清除URL参数
+          const newUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, newUrl);
+          
+          // 给Safari一些时间来恢复会话
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
       
       // Check if user is already connected
       const status = await identityCkBtcManager.getConnectionStatus();
@@ -149,7 +181,18 @@ class App {
       }
     } catch (error) {
       console.error('Identity connection failed:', error);
+      
+      // 针对Safari的特殊错误处理
+      if (this.isMobile && this.isSafari) {
+        if (error.message.includes('direct navigation') || error.message.includes('timeout')) {
+          this.showMessage('Safari移动端登录需要特殊处理。请点击页面上的"Click here to login manually"链接，完成登录后返回此页面。', 'error');
+        } else {
+          this.showMessage('Safari移动端登录失败: ' + error.message + '。请尝试使用手动登录链接。', 'error');
+        }
+      } else {
       this.showMessage('Identity connection failed: ' + error.message, 'error');
+      }
+      
       this.pageState = 'connect';
     } finally {
       this.loading = false;
@@ -367,24 +410,46 @@ class App {
       
       console.log('Updating principal balance for user:', this.userPrincipal);
       
+      this.showMessage('🔄 Checking for new deposits and auto-consolidating...', 'info');
+      
       // 调用新的后端方法
       await my_rust_dapp_backend.update_balance_from_principal(this.userPrincipal);
       
-      // Wait a moment for the update to complete
-      setTimeout(async () => {
+      // 轮询检查余额是否已更新
+      let attempts = 0;
+      const maxAttempts = 10;
+      const checkBalance = async () => {
+        attempts++;
         await this.loadUserData();
-        this.showMessage('Principal balance updated successfully!', 'success');
+        
+        if (this.currentUser && this.currentUser.balance > 0) {
+          this.showMessage('✅ Balance updated and auto-consolidation completed!', 'success');
         this.loading = false;
         this.#render();
-      }, 2000);
+        } else if (attempts < maxAttempts) {
+          console.log(`Balance not updated yet, attempt ${attempts}/${maxAttempts}`);
+          setTimeout(checkBalance, 1000); // 每秒检查一次
+        } else {
+          this.showMessage('⚠️ Balance update may still be processing. Please refresh the page in a few seconds.', 'warning');
+          this.loading = false;
+          this.#render();
+        }
+      };
+      
+      // 开始轮询检查
+      setTimeout(checkBalance, 2000); // 2秒后开始检查
       
     } catch (error) {
       console.error('Failed to update principal balance:', error);
-      this.showMessage('Principal balance update failed: ' + error.message, 'error');
+      this.showMessage('Balance update failed: ' + error.message, 'error');
       this.loading = false;
       this.#render();
     }
   }
+
+
+
+
 
   // 查询所有资产余额（目前只查ckBTC，结构可扩展）
   async loadAllAssetBalances() {
@@ -1356,10 +1421,10 @@ class App {
       });
     } else {
       // fallback
-      const textarea = document.createElement('textarea');
+        const textarea = document.createElement('textarea');
       textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
+        document.body.appendChild(textarea);
+        textarea.select();
       try {
         document.execCommand('copy');
         this.showMessage('复制成功', 'success');
@@ -1367,36 +1432,9 @@ class App {
         this.showMessage('复制失败', 'error');
       }
       document.body.removeChild(textarea);
-    }
-  }
-
-
-
-  // 新增：管理员自动归集所有用户账户
-  async autoConsolidateAllAccounts() {
-    try {
-      this.loading = true;
-      this.#render();
-      
-      console.log('Starting auto consolidation for all users');
-      
-      const result = await my_rust_dapp_backend.auto_consolidate_all_accounts();
-      
-      if (result.Ok !== undefined) {
-        this.showMessage('Auto consolidation completed!', 'success');
-        alert(result.Ok);
-      } else if (result.Err !== undefined) {
-        this.showMessage('Auto consolidation failed: ' + result.Err, 'error');
       }
-      
-    } catch (error) {
-      console.error('Failed to auto consolidate all accounts:', error);
-      this.showMessage('Failed to auto consolidate: ' + error.message, 'error');
-    } finally {
-      this.loading = false;
-      this.#render();
-    }
   }
+
 
   // 新增：查询统一账户余额
   async checkTreasuryBalance() {
@@ -1415,7 +1453,7 @@ class App {
         alert(`Treasury Balance: ${balanceFormatted}`);
       } else if (result.Err !== undefined) {
         this.showMessage('Failed to get treasury balance: ' + result.Err, 'error');
-      }
+        }
       
     } catch (error) {
       console.error('Failed to check treasury balance:', error);
@@ -1425,6 +1463,8 @@ class App {
       this.#render();
     }
   }
+
+
 
   async getTreasuryAccount() {
     try {
@@ -1494,7 +1534,7 @@ class App {
       render(html`
         <div class="nav-tabs">
           <button class="${this.activePage === 'game' ? 'active' : ''}" @click=${() => { this.activePage = 'game'; this.#render(); }}>Game</button>
-          <button class="${this.activePage === 'profile' ? 'active' : ''}" @click=${() => { this.activePage = 'profile'; this.#render(); }}>Profile</button>
+          <button class="${this.activePage === 'profile' ? 'active' : ''}" @click=${() => { this.activePage = 'profile'; this.#render(); }}>${this.isConnected ? 'Profile' : 'Login'}</button>
         </div>
         ${this.activePage === 'game' ? html`
           <section class="main-right">
@@ -1605,6 +1645,22 @@ class App {
                         >
                           ${this.loading ? '🎲 Triggering Draw...' : '🎲 Trigger Draw (Admin Only)'}
                         </button>
+                        <button 
+                          class="btn btn-info" 
+                          @click=${this.checkTreasuryBalance.bind(this)}
+                          ?disabled=${this.loading}
+                          style="width: 100%; margin-top: 10px; background: #17a2b8; color: white; border: none; font-weight: bold; padding: 12px; border-radius: 8px;"
+                        >
+                          ${this.loading ? '💰 Checking Treasury...' : '💰 Check Treasury Balance (Admin)'}
+                        </button>
+                        <button 
+                          class="btn btn-warning" 
+                          @click=${this.getTreasuryAccount.bind(this)}
+                          ?disabled=${this.loading}
+                          style="width: 100%; margin-top: 10px; background: #ffc107; color: #212529; border: none; font-weight: bold; padding: 12px; border-radius: 8px;"
+                        >
+                          ${this.loading ? '📋 Getting Treasury Info...' : '📋 Treasury Account Info (Admin)'}
+                        </button>
                       ` : html`
                         <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; text-align: center; border-left: 4px solid #ffc107;">
                           <div style="font-size: 0.9rem; color: #856404;">
@@ -1621,6 +1677,47 @@ class App {
                       </div>
                       <div style="font-size: 0.9rem; color: #888;">
                         Please login to participate in the lottery and place your bets!
+                      </div>
+                      <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #ffc107; text-align: left;">
+                        <div style="font-size: 0.9rem; color: #856404; margin-bottom: 8px; font-weight: bold;">
+                          🌐 Browser Compatibility
+                        </div>
+                        <div style="font-size: 0.8rem; color: #856404; line-height: 1.4;">
+                          ${this.isMobile ? html`
+                            ${this.isChrome ? html`
+                              ✅ Mobile Chrome: Fully supported
+                            ` : this.isSafari ? html`
+                              ⚠️ Mobile Safari: May require multiple attempts
+                              <br>
+                              <span style="color: #d63384; font-weight: bold;">
+                                🔧 Safari Alternative: 
+                                <a href="#" @click=${(e) => { e.preventDefault(); this.handleSafariManualLogin(); }} style="color: #d63384; text-decoration: underline;">
+                                  Click here to login manually
+                                </a>
+                              </span>
+                            ` : this.isFirefox ? html`
+                              ⚠️ Mobile Firefox: May require longer timeout
+                            ` : this.isEdge ? html`
+                              ⚠️ Mobile Edge: May require longer timeout
+                            ` : html`
+                              ⚠️ Other mobile browser: Compatibility may vary
+                            `}
+                          ` : html`
+                            ${this.isChrome ? html`
+                              ✅ Desktop Chrome: Fully supported
+                            ` : this.isFirefox ? html`
+                              ✅ Desktop Firefox: Fully supported
+                            ` : this.isEdge ? html`
+                              ✅ Desktop Edge: Fully supported
+                            ` : html`
+                              ⚠️ Other desktop browser: Compatibility may vary
+                            `}
+                          `}
+                          <br>
+                          <span style="font-size: 0.75rem; color: #856404;">
+                            💡 Tip: If login fails, try refreshing the page or using a different browser
+                          </span>
+                </div>
                       </div>
                     </div>
                   `}
@@ -1679,7 +1776,7 @@ class App {
             <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
               <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
                 <h2 style="margin: 0;">👤 My Profile</h2>
-                ${this.isConnected ? html`
+              ${this.isConnected ? html`
                   <div class="profile-user-section" style="display: flex; align-items: center; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 6px; background: #f8f9fa; padding: 6px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
                       <div style="width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
@@ -1696,8 +1793,8 @@ class App {
                       ?disabled=${this.loading}
                       title="Logout"
                     >
-                      <span style="font-size:1.1em;">🚪</span> 退出登录
-                    </button>
+                      <span style="font-size:1.1em;">🚪</span> Logout
+                </button>
                   </div>
                 ` : html`
                   <button 
@@ -1710,16 +1807,64 @@ class App {
                   </button>
                 `}
               </div>
+              
+              ${!this.isConnected ? html`
+                <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #ffc107;">
+                  <div style="font-size: 0.9rem; color: #856404; margin-bottom: 8px; font-weight: bold;">
+                    🌐 Browser Compatibility
+                  </div>
+                  <div style="font-size: 0.8rem; color: #856404; line-height: 1.4;">
+                    ${this.isMobile ? html`
+                      ${this.isChrome ? html`
+                        ✅ Mobile Chrome: Fully supported
+                      ` : this.isSafari ? html`
+                        ⚠️ Mobile Safari: May require multiple attempts
+                        <br>
+                        <span style="color: #d63384; font-weight: bold;">
+                          🔧 Safari Alternative: 
+                          <a href="#" @click=${(e) => { e.preventDefault(); this.handleSafariManualLogin(); }} style="color: #d63384; text-decoration: underline;">
+                            Click here to login manually
+                          </a>
+                              </span>
+                      ` : this.isFirefox ? html`
+                        ⚠️ Mobile Firefox: May require longer timeout
+                      ` : this.isEdge ? html`
+                        ⚠️ Mobile Edge: May require longer timeout
+                      ` : html`
+                        ⚠️ Other mobile browser: Compatibility may vary
+                      `}
+                    ` : html`
+                      ${this.isChrome ? html`
+                        ✅ Desktop Chrome: Fully supported
+                      ` : this.isFirefox ? html`
+                        ✅ Desktop Firefox: Fully supported
+                      ` : this.isEdge ? html`
+                        ✅ Desktop Edge: Fully supported
+                      ` : html`
+                        ⚠️ Other desktop browser: Compatibility may vary
+                      `}
+                    `}
+                    <br>
+                    <span style="font-size: 0.75rem; color: #856404;">
+                      💡 Tip: If login fails, try refreshing the page or using a different browser
+                    </span>
+                            </div>
+                          </div>
+              ` : ''}
               <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
                 <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Principal:</span>
                 <span class="profile-value" style="font-family: monospace; font-size: 1.1em; margin-right: 8px;">${this.userPrincipal ? this.formatPrincipal(this.userPrincipal.toString()) : '--'}</span>
                 <button class="btn-small copy-btn" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #f3f3f3; cursor: pointer;" @click=${() => this.copyPrincipal(this.userPrincipal)}>Copy</button>
-                            </div>
+                    </div>
               <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
                 <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Balance:</span>
                 <span class="profile-balance" style="font-family: monospace; color: #38a169; font-weight: bold; font-size: 1.3em; margin-right: 8px;">${this.currentUser ? this.formatBalance(this.currentUser.balance) : '0.00000000 ckBTC'}</span>
                 <button class="btn-small" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #e3f2fd; color: #1976d2; cursor: pointer;" @click=${this.updateBalance.bind(this)} ?disabled=${this.loading}>${this.loading ? 'Refreshing...' : '🔄 Refresh'}</button>
-                          </div>
+              </div>
+
+
+              
+
                     </div>
 
             <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
@@ -1769,6 +1914,50 @@ class App {
         `}
       `, document.getElementById('app'));
     });
+  }
+
+  // Safari 手动登录处理
+  handleSafariManualLogin() {
+    if (this.isMobile && this.isSafari) {
+      // 打开新窗口进行登录
+      const loginUrl = 'https://identity.ic0.app/';
+      const newWindow = window.open(loginUrl, '_blank', 'width=400,height=600');
+      
+      if (newWindow) {
+        // 监听窗口关闭事件
+        const checkClosed = setInterval(() => {
+          if (newWindow.closed) {
+            clearInterval(checkClosed);
+            console.log('Safari manual login window closed, checking session...');
+            
+            // 延迟检查会话状态
+            setTimeout(async () => {
+              try {
+                const status = await identityCkBtcManager.getConnectionStatus();
+                if (status.isConnected) {
+                  console.log('Safari manual login successful');
+                  this.userPrincipal = status.principal;
+                  this.identityProvider = status.provider;
+                  this.pageState = 'dashboard';
+                  await this.createUserInternal();
+                  await this.loadUserData();
+                  this.showMessage('Safari manual login successful!', 'success');
+                  this.#render();
+                } else {
+                  console.log('Safari manual login failed - no session found');
+                  this.showMessage('Manual login failed. Please try again.', 'error');
+                }
+              } catch (error) {
+                console.error('Safari manual login check failed:', error);
+                this.showMessage('Failed to check login status. Please try again.', 'error');
+              }
+            }, 1000);
+          }
+        }, 500);
+      } else {
+        this.showMessage('Failed to open login window. Please allow popups and try again.', 'error');
+      }
+    }
   }
 }
 

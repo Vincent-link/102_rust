@@ -98,75 +98,54 @@ class IdentityCkBtcManager {
       // 主网环境使用真实 Internet Identity
       console.log('Mainnet environment detected, using Internet Identity');
       
-      // 检查移动端兼容性
+      // 增强的移动端浏览器检测
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+      const isFirefox = /Firefox/.test(navigator.userAgent);
+      const isEdge = /Edg/.test(navigator.userAgent);
+      const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
       
-      if (isMobile && isSafari) {
-        console.log('Mobile Safari detected, using enhanced authentication flow');
-        return await this.connectWithMobileSafari();
-      }
-      
-      // 确保 AuthClient 已初始化
-      if (!this.authClient) {
-        this.authClient = await AuthClient.create();
-        console.log('AuthClient created for mainnet');
-      }
-      
-      // 检查是否已经认证
-      if (this.authClient.isAuthenticated()) {
-        console.log('Already authenticated with Internet Identity');
-        this.identity = this.authClient.getIdentity();
-        this.principal = this.identity.getPrincipal().toText();
-        
-        // 检查是否是匿名身份
-        if (this.principal === '2vxsx-fae') {
-          console.log('Detected anonymous identity, starting fresh authentication');
-          // 如果检测到匿名身份，清除认证状态并重新认证
-          await this.authClient.logout();
-          // 继续执行下面的认证流程
-        } else {
-          this.isConnected = true;
-          this.provider = 'internet-identity';
-          console.log('Connected with existing Internet Identity:', this.principal);
-          
-          // 保存会话状态到 localStorage
-          localStorage.setItem('ic_principal', this.principal);
-          localStorage.setItem('ic_provider', this.provider);
-          console.log('Saved session state to localStorage for existing connection:', this.principal);
-          
-          return { success: true, principal: this.principal, provider: this.provider };
-        }
-      }
-
-      // 需要重新认证
-      console.log('Starting Internet Identity authentication...');
-      await new Promise((resolve, reject) => {
-        this.authClient.login({
-          identityProvider: 'https://identity.ic0.app/',
-          onSuccess: resolve,
-          onError: reject
-        });
+      console.log('Browser detection:', {
+        isMobile,
+        isSafari,
+        isFirefox,
+        isEdge,
+        isChrome,
+        userAgent: navigator.userAgent
       });
       
-      this.identity = this.authClient.getIdentity();
-      this.principal = this.identity.getPrincipal().toText();
-      
-      // 再次检查是否是匿名身份
-      if (this.principal === '2vxsx-fae') {
-        throw new Error('Authentication failed - anonymous identity detected');
+      // 针对不同移动端浏览器的特殊处理
+      if (isMobile) {
+        if (isSafari) {
+        console.log('Mobile Safari detected, using enhanced authentication flow');
+        return await this.connectWithMobileSafari();
+        } else if (isFirefox) {
+          console.log('Mobile Firefox detected, using Firefox optimized flow');
+          return await this.connectWithMobileFirefox();
+        } else if (isEdge) {
+          console.log('Mobile Edge detected, using Edge optimized flow');
+          return await this.connectWithMobileEdge();
+        } else if (isChrome) {
+          console.log('Mobile Chrome detected, using Chrome optimized flow');
+          return await this.connectWithMobileChrome();
+        } else {
+          console.log('Other mobile browser detected, using generic mobile flow');
+          return await this.connectWithGenericMobile();
+        }
       }
       
-      this.isConnected = true;
-      this.provider = 'internet-identity';
-      console.log('Connected with real Internet Identity:', this.principal);
+      // 桌面端浏览器处理
+      if (isFirefox) {
+        console.log('Desktop Firefox detected, using Firefox optimized flow');
+        return await this.connectWithDesktopFirefox();
+      } else if (isEdge) {
+        console.log('Desktop Edge detected, using Edge optimized flow');
+        return await this.connectWithDesktopEdge();
+      }
       
-      // 保存会话状态到 localStorage（适用于所有环境）
-      localStorage.setItem('ic_principal', this.principal);
-      localStorage.setItem('ic_provider', this.provider);
-      console.log('Saved session state to localStorage:', this.principal);
-      
-      return { success: true, principal: this.principal, provider: this.provider };
+      // 默认处理（Chrome和其他浏览器）
+      console.log('Using default authentication flow');
+      return await this.connectWithDefaultBrowser();
     } catch (error) {
       console.error('Identity connection failed:', error);
       throw error;
@@ -210,10 +189,35 @@ class IdentityCkBtcManager {
       // Mobile Safari 特殊处理
       console.log('Starting Mobile Safari authentication...');
       
+      // Safari 移动端特殊处理：先尝试直接跳转
+      const safariAuthUrl = 'https://identity.ic0.app/';
+      
+      // 检查是否支持弹窗
+      let popupSupported = true;
+      try {
+        const testPopup = window.open('', '_blank', 'width=1,height=1');
+        if (testPopup) {
+          testPopup.close();
+        } else {
+          popupSupported = false;
+        }
+      } catch (e) {
+        popupSupported = false;
+      }
+      
+      console.log('Safari popup support check:', popupSupported);
+      
+      if (!popupSupported) {
+        // Safari 不支持弹窗，使用直接跳转
+        console.log('Safari popup not supported, using direct navigation');
+        window.location.href = safariAuthUrl;
+        throw new Error('Safari authentication requires direct navigation. Please complete authentication and return to this page.');
+      }
+      
       // 使用更兼容的登录方式
       await new Promise((resolve, reject) => {
         const loginOptions = {
-          identityProvider: 'https://identity.ic0.app/',
+          identityProvider: safariAuthUrl,
           onSuccess: () => {
             console.log('Mobile Safari authentication successful');
             resolve();
@@ -224,18 +228,59 @@ class IdentityCkBtcManager {
           }
         };
         
-        // 添加超时处理
+        // Safari 需要更长的超时时间
         const timeout = setTimeout(() => {
-          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
-        }, 30000); // 30秒超时
+          console.log('Safari authentication timeout, trying alternative method');
+          // 尝试直接跳转作为备选方案
+          window.location.href = safariAuthUrl;
+          reject(new Error('Authentication timeout. Please complete authentication and return to this page.'));
+        }, 60000); // 60秒超时
         
-        this.authClient.login(loginOptions);
+        // 添加用户交互检测
+        let userInteracted = false;
+        const interactionHandler = () => {
+          userInteracted = true;
+          document.removeEventListener('touchstart', interactionHandler);
+          document.removeEventListener('click', interactionHandler);
+        };
+        
+        document.addEventListener('touchstart', interactionHandler);
+        document.addEventListener('click', interactionHandler);
+        
+        // 延迟启动认证，确保用户交互
+        setTimeout(() => {
+          if (!userInteracted) {
+            console.log('No user interaction detected, prompting user');
+            // 显示用户提示
+            if (confirm('Safari requires user interaction to open authentication. Click OK to continue.')) {
+              userInteracted = true;
+            }
+          }
+          
+          if (userInteracted) {
+            console.log('User interaction detected, starting authentication');
+            this.authClient.login(loginOptions);
+          } else {
+            reject(new Error('User interaction required for Safari authentication.'));
+          }
+        }, 100);
         
         // 监听成功回调，清除超时
         const originalOnSuccess = loginOptions.onSuccess;
         loginOptions.onSuccess = () => {
           clearTimeout(timeout);
+          document.removeEventListener('touchstart', interactionHandler);
+          document.removeEventListener('click', interactionHandler);
           originalOnSuccess();
+        };
+        
+        // 监听错误回调，清除事件监听器
+        const originalOnError = loginOptions.onError;
+        loginOptions.onError = (error) => {
+          clearTimeout(timeout);
+          document.removeEventListener('touchstart', interactionHandler);
+          document.removeEventListener('click', interactionHandler);
+          originalOnError(error);
         };
       });
       
@@ -262,76 +307,573 @@ class IdentityCkBtcManager {
     }
   }
 
-  // Connect with Internet Identity using AuthClient
-  async connectWithInternetIdentity() {
+  // 专门处理移动端 Firefox 的登录
+  async connectWithMobileFirefox() {
     try {
-      const authClient = await this.initializeAuthClient();
+      console.log('Using Mobile Firefox optimized authentication...');
       
-      if (authClient.isAuthenticated()) {
-        // Already authenticated
-        this.identity = authClient.getIdentity();
-        const principal = this.identity.getPrincipal();
+      // 确保 AuthClient 已初始化
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for Mobile Firefox');
+      }
+      
+      // 检查是否已经认证
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in Mobile Firefox');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
         
-        // Check if principal is valid (not anonymous)
-        if (principal.toText() === '2vxsx-fae') {
-          throw new Error('Anonymous principal detected. Please authenticate properly.');
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in Mobile Firefox, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in Mobile Firefox:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Mobile Firefox connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
         }
-        
-        this.principal = principal.toText();
-        this.isConnected = true;
-        this.provider = 'internet-identity';
-        
-        console.log('Already authenticated with Internet Identity:', this.principal);
-        
-        return {
-          success: true,
-          principal: this.principal,
-          provider: this.provider
-        };
       }
 
-      // Need to authenticate
-      return new Promise((resolve, reject) => {
-        authClient.login({
+      // Mobile Firefox 特殊处理
+      console.log('Starting Mobile Firefox authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
           identityProvider: 'https://identity.ic0.app/',
-          onSuccess: async () => {
-            try {
-              this.identity = authClient.getIdentity();
-              const principal = this.identity.getPrincipal();
-              
-              // Check if principal is valid (not anonymous)
-              if (principal.toText() === '2vxsx-fae') {
-                throw new Error('Anonymous principal detected. Please authenticate properly.');
-              }
-              
-              this.principal = principal.toText();
-              this.isConnected = true;
-              this.provider = 'internet-identity';
-              
-              console.log('Connected with Internet Identity:', this.principal);
-              
-              // 保存会话状态到 localStorage
-              localStorage.setItem('ic_principal', this.principal);
-              localStorage.setItem('ic_provider', this.provider);
-              console.log('Saved session state to localStorage:', this.principal);
-              
-              resolve({
-                success: true,
-                principal: this.principal,
-                provider: this.provider
-              });
-            } catch (error) {
-              reject(error);
-            }
+          onSuccess: () => {
+            console.log('Mobile Firefox authentication successful');
+            resolve();
           },
           onError: (error) => {
-            console.error('Authentication failed:', error);
-            reject(error);
+            console.error('Mobile Firefox authentication failed:', error);
+            reject(new Error('Mobile Firefox authentication failed. Please try again or use a different browser.'));
           }
-        });
+        };
+        
+        // Firefox 需要更长的超时时间
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 45000); // 45秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
       });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in Mobile Firefox');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in Mobile Firefox:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Mobile Firefox:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
     } catch (error) {
-      console.error('Internet Identity connection failed:', error);
+      console.error('Mobile Firefox authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 专门处理移动端 Edge 的登录
+  async connectWithMobileEdge() {
+    try {
+      console.log('Using Mobile Edge optimized authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for Mobile Edge');
+      }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in Mobile Edge');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in Mobile Edge, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in Mobile Edge:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Mobile Edge connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+        }
+      }
+
+      console.log('Starting Mobile Edge authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Mobile Edge authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Mobile Edge authentication failed:', error);
+            reject(new Error('Mobile Edge authentication failed. Please try again or use a different browser.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 40000); // 40秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in Mobile Edge');
+      }
+      
+        this.isConnected = true;
+        this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in Mobile Edge:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Mobile Edge:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+    } catch (error) {
+      console.error('Mobile Edge authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 专门处理移动端 Chrome 的登录
+  async connectWithMobileChrome() {
+    try {
+      console.log('Using Mobile Chrome optimized authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for Mobile Chrome');
+      }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in Mobile Chrome');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in Mobile Chrome, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in Mobile Chrome:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Mobile Chrome connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+      }
+      }
+
+      console.log('Starting Mobile Chrome authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Mobile Chrome authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Mobile Chrome authentication failed:', error);
+            reject(new Error('Mobile Chrome authentication failed. Please try again.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 35000); // 35秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in Mobile Chrome');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in Mobile Chrome:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Mobile Chrome:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+    } catch (error) {
+      console.error('Mobile Chrome authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 通用移动端浏览器登录（适用于其他移动端浏览器）
+  async connectWithGenericMobile() {
+    try {
+      console.log('Using generic mobile browser authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for generic mobile browser');
+      }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in generic mobile browser');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in generic mobile browser, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in generic mobile browser:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing generic mobile browser connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+        }
+      }
+
+      console.log('Starting generic mobile browser authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Generic mobile browser authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Generic mobile browser authentication failed:', error);
+            reject(new Error('Authentication failed. Please try again or use a different browser.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 50000); // 50秒超时，给其他浏览器更多时间
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in generic mobile browser');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in generic mobile browser:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for generic mobile browser:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+    } catch (error) {
+      console.error('Generic mobile browser authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 桌面端 Firefox 登录
+  async connectWithDesktopFirefox() {
+    try {
+      console.log('Using Desktop Firefox optimized authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for Desktop Firefox');
+      }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in Desktop Firefox');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in Desktop Firefox, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+              this.isConnected = true;
+              this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in Desktop Firefox:', this.principal);
+              
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Desktop Firefox connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+        }
+      }
+
+      console.log('Starting Desktop Firefox authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Desktop Firefox authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Desktop Firefox authentication failed:', error);
+            reject(new Error('Desktop Firefox authentication failed. Please try again.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 30000); // 30秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in Desktop Firefox');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in Desktop Firefox:', this.principal);
+      
+              localStorage.setItem('ic_principal', this.principal);
+              localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Desktop Firefox:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+    } catch (error) {
+      console.error('Desktop Firefox authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 桌面端 Edge 登录
+  async connectWithDesktopEdge() {
+    try {
+      console.log('Using Desktop Edge optimized authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for Desktop Edge');
+      }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in Desktop Edge');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in Desktop Edge, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in Desktop Edge:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing Desktop Edge connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+        }
+      }
+
+      console.log('Starting Desktop Edge authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Desktop Edge authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Desktop Edge authentication failed:', error);
+            reject(new Error('Desktop Edge authentication failed. Please try again.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 30000); // 30秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in Desktop Edge');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in Desktop Edge:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for Desktop Edge:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+            } catch (error) {
+      console.error('Desktop Edge authentication failed:', error);
+      throw error;
+    }
+  }
+
+  // 默认浏览器登录（Chrome和其他浏览器）
+  async connectWithDefaultBrowser() {
+    try {
+      console.log('Using default browser authentication...');
+      
+      if (!this.authClient) {
+        this.authClient = await AuthClient.create();
+        console.log('AuthClient created for default browser');
+            }
+      
+      if (this.authClient.isAuthenticated()) {
+        console.log('Already authenticated in default browser');
+        this.identity = this.authClient.getIdentity();
+        this.principal = this.identity.getPrincipal().toText();
+        
+        if (this.principal === '2vxsx-fae') {
+          console.log('Detected anonymous identity in default browser, starting fresh authentication');
+          await this.authClient.logout();
+        } else {
+          this.isConnected = true;
+          this.provider = 'internet-identity';
+          console.log('Connected with existing Internet Identity in default browser:', this.principal);
+          
+          localStorage.setItem('ic_principal', this.principal);
+          localStorage.setItem('ic_provider', this.provider);
+          console.log('Saved session state to localStorage for existing default browser connection:', this.principal);
+          
+          return { success: true, principal: this.principal, provider: this.provider };
+        }
+      }
+
+      console.log('Starting default browser authentication...');
+      
+      await new Promise((resolve, reject) => {
+        const loginOptions = {
+          identityProvider: 'https://identity.ic0.app/',
+          onSuccess: () => {
+            console.log('Default browser authentication successful');
+            resolve();
+          },
+          onError: (error) => {
+            console.error('Default browser authentication failed:', error);
+            reject(new Error('Authentication failed. Please try again.'));
+          }
+        };
+        
+        const timeout = setTimeout(() => {
+          reject(new Error('Authentication timeout. Please check if the popup was blocked.'));
+        }, 30000); // 30秒超时
+        
+        this.authClient.login(loginOptions);
+        
+        const originalOnSuccess = loginOptions.onSuccess;
+        loginOptions.onSuccess = () => {
+          clearTimeout(timeout);
+          originalOnSuccess();
+        };
+      });
+      
+      this.identity = this.authClient.getIdentity();
+      this.principal = this.identity.getPrincipal().toText();
+      
+      if (this.principal === '2vxsx-fae') {
+        throw new Error('Authentication failed - anonymous identity detected in default browser');
+      }
+      
+      this.isConnected = true;
+      this.provider = 'internet-identity';
+      console.log('Connected with Internet Identity in default browser:', this.principal);
+      
+      localStorage.setItem('ic_principal', this.principal);
+      localStorage.setItem('ic_provider', this.provider);
+      console.log('Saved session state to localStorage for default browser:', this.principal);
+      
+      return { success: true, principal: this.principal, provider: this.provider };
+    } catch (error) {
+      console.error('Default browser authentication failed:', error);
       throw error;
     }
   }
@@ -360,8 +902,6 @@ class IdentityCkBtcManager {
       throw error;
     }
   }
-
-
 
   // Record a ckBTC deposit
   async recordCkBtcDeposit(txHash, amount) {
@@ -442,8 +982,6 @@ class IdentityCkBtcManager {
       throw error;
     }
   }
-
-
 
   // Get ckBTC canister ID
   async getCkBtcCanisterId() {
@@ -566,18 +1104,64 @@ class IdentityCkBtcManager {
         console.log('AuthClient not authenticated');
       }
       
-      // 检查移动端 Safari 的特殊情况
+      // 增强的移动端浏览器检测和会话恢复
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+      const isFirefox = /Firefox/.test(navigator.userAgent);
+      const isEdge = /Edg/.test(navigator.userAgent);
+      const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
       
-      if (isMobile && isSafari) {
-        console.log('Mobile Safari detected, checking for persistent session...');
+      console.log('Browser detection for session recovery:', {
+        isMobile,
+        isSafari,
+        isFirefox,
+        isEdge,
+        isChrome
+      });
+      
+      // 针对不同移动端浏览器的会话恢复
+      if (isMobile) {
+        console.log('Mobile browser detected, checking for persistent session...');
+        
         // 尝试从 localStorage 恢复会话状态
         const savedPrincipal = localStorage.getItem('ic_principal');
         const savedProvider = localStorage.getItem('ic_provider');
         
         if (savedPrincipal && savedPrincipal !== '2vxsx-fae') {
-          console.log('Found saved principal in localStorage:', savedPrincipal);
+          console.log('Found saved principal in localStorage for mobile browser:', savedPrincipal);
+          this.principal = savedPrincipal;
+          this.provider = savedProvider || 'internet-identity';
+          this.isConnected = true;
+          
+          return {
+            isConnected: true,
+            principal: this.principal,
+            provider: this.provider
+          };
+        }
+        
+        // 针对特定移动端浏览器的额外检查
+        if (isSafari) {
+          console.log('Mobile Safari detected, checking for Safari-specific session...');
+          // Safari 可能需要额外的会话检查
+        } else if (isFirefox) {
+          console.log('Mobile Firefox detected, checking for Firefox-specific session...');
+          // Firefox 可能需要额外的会话检查
+        } else if (isEdge) {
+          console.log('Mobile Edge detected, checking for Edge-specific session...');
+          // Edge 可能需要额外的会话检查
+        }
+      }
+      
+      // 桌面端浏览器的会话恢复
+      if (!isMobile) {
+        console.log('Desktop browser detected, checking for persistent session...');
+        
+        const savedPrincipal = localStorage.getItem('ic_principal');
+        const savedProvider = localStorage.getItem('ic_provider');
+        
+        if (savedPrincipal && savedPrincipal !== '2vxsx-fae') {
+          console.log('Found saved principal in localStorage for desktop browser:', savedPrincipal);
           this.principal = savedPrincipal;
           this.provider = savedProvider || 'internet-identity';
           this.isConnected = true;
