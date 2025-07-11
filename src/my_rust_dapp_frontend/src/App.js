@@ -3,12 +3,14 @@ import { my_rust_dapp_backend } from 'declarations/my_rust_dapp_backend';
 import { Principal } from '@dfinity/principal';
 import logo from './logo2.svg';
 import identityCkBtcManager from './identity-ckbtc.js';
+import { AuthClient } from '@dfinity/auth-client';
 
 class App {
   constructor() {
     this.currentUser = null;
     this.currentRound = null;
     this.systemStats = null;
+    this.historicalWinners = [];
     this.userPrincipal = null;
     this.isAdmin = false;
     this.depositAmount = '';
@@ -50,6 +52,7 @@ class App {
     console.log('Browser detection:', this.browserInfo);
     
     this.activePage = 'game'; // 'game' or 'profile'
+    this.showIdentityModal = false; // 控制identity弹框显示
     
     // Render immediately, then initialize asynchronously
     this.#render();
@@ -123,6 +126,8 @@ class App {
       await this.loadRoundData();
       console.log('Loading system stats...');
       await this.loadSystemStats();
+      console.log('Loading historical winners...');
+      await this.loadHistoricalWinners();
       
       // Start countdown
       console.log('Starting countdown...');
@@ -285,6 +290,7 @@ class App {
       this.userDepositAccount = null;
       this.pageState = 'connect';
       this.showMessage('Identity disconnected', 'info');
+      this.activePage = 'game';
     } catch (error) {
       console.error('Failed to disconnect identity:', error);
       this.showMessage('Disconnection failed: ' + error.message, 'error');
@@ -410,7 +416,7 @@ class App {
       
       console.log('Updating principal balance for user:', this.userPrincipal);
       
-      this.showMessage('🔄 Checking for new deposits and auto-consolidating...', 'info');
+      this.showMessage('💰 Checking confirmed deposits...', 'info');
       
       // 调用新的后端方法
       await my_rust_dapp_backend.update_balance_from_principal(this.userPrincipal);
@@ -423,14 +429,14 @@ class App {
         await this.loadUserData();
         
         if (this.currentUser && this.currentUser.balance > 0) {
-          this.showMessage('✅ Balance updated and auto-consolidation completed!', 'success');
+          this.showMessage('✅ Deposit records synced successfully!', 'success');
         this.loading = false;
         this.#render();
         } else if (attempts < maxAttempts) {
           console.log(`Balance not updated yet, attempt ${attempts}/${maxAttempts}`);
           setTimeout(checkBalance, 1000); // 每秒检查一次
         } else {
-          this.showMessage('⚠️ Balance update may still be processing. Please refresh the page in a few seconds.', 'warning');
+          this.showMessage('⚠️ Deposit sync may still be processing, please try again later.', 'warning');
           this.loading = false;
           this.#render();
         }
@@ -441,7 +447,7 @@ class App {
       
     } catch (error) {
       console.error('Failed to update principal balance:', error);
-      this.showMessage('Balance update failed: ' + error.message, 'error');
+      this.showMessage('Deposit sync failed: ' + error.message, 'error');
       this.loading = false;
       this.#render();
     }
@@ -745,6 +751,15 @@ class App {
       this.systemStats = await my_rust_dapp_backend.get_stats();
     } catch (error) {
       console.error('Failed to load system stats:', error);
+    }
+  }
+
+  async loadHistoricalWinners() {
+    try {
+      this.historicalWinners = await my_rust_dapp_backend.get_historical_winners();
+    } catch (error) {
+      console.error('Failed to load historical winners:', error);
+      this.historicalWinners = [];
     }
   }
 
@@ -1435,68 +1450,30 @@ class App {
       }
   }
 
-
-  // 新增：查询统一账户余额
-  async checkTreasuryBalance() {
-    try {
-      this.loading = true;
-      this.#render();
-      
-      console.log('Checking treasury balance');
-      
-      const result = await my_rust_dapp_backend.get_treasury_balance();
-      
-      if (result.Ok !== undefined) {
-        const balance = result.Ok;
-        const balanceFormatted = this.formatBalance(balance);
-        this.showMessage(`Treasury balance: ${balanceFormatted}`, 'success');
-        alert(`Treasury Balance: ${balanceFormatted}`);
-      } else if (result.Err !== undefined) {
-        this.showMessage('Failed to get treasury balance: ' + result.Err, 'error');
-        }
-      
-    } catch (error) {
-      console.error('Failed to check treasury balance:', error);
-      this.showMessage('Failed to check treasury balance: ' + error.message, 'error');
-    } finally {
-      this.loading = false;
-      this.#render();
-    }
-  }
-
-
-
-  async getTreasuryAccount() {
-    try {
-      this.loading = true;
-      this.#render();
-      
-      console.log('Getting treasury account info');
-      
-      const treasuryAccount = await my_rust_dapp_backend.get_treasury_account();
-      
-      if (treasuryAccount) {
-        const ownerText = treasuryAccount.owner.toString();
-        const subaccountText = treasuryAccount.subaccount ? 
-          Array.from(treasuryAccount.subaccount).map(b => (b || 0).toString(16).padStart(2, '0')).join('') : 
-          'None';
-        
-        const accountInfo = `Treasury Account Info:\n\nOwner: ${ownerText}\nSubaccount: ${subaccountText}`;
-        this.showMessage('Treasury account info retrieved successfully!', 'success');
-        alert(accountInfo);
-      } else {
-        this.showMessage('Failed to get treasury account info', 'error');
+  copyWinnerAddress(principal) {
+    if (!principal) return;
+    const text = principal.toString();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        this.showMessage('Winner address copied to clipboard!', 'success');
+      }, () => {
+        this.showMessage('Failed to copy winner address', 'error');
+      });
+    } else {
+      // fallback
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        this.showMessage('Winner address copied to clipboard!', 'success');
+      } catch (e) {
+        this.showMessage('Failed to copy winner address', 'error');
       }
-      
-    } catch (error) {
-      console.error('Failed to get treasury account:', error);
-      this.showMessage('Failed to get treasury account: ' + error.message, 'error');
-    } finally {
-      this.loading = false;
-      this.#render();
+      document.body.removeChild(textarea);
     }
   }
-
 
 
   // 新增：手动触发轮次自动开始
@@ -1524,7 +1501,27 @@ class App {
     }
   }
 
-
+  async openIdentityPopupAndAuthorize() {
+    const authClient = await AuthClient.create();
+    await authClient.login({
+      identityProvider: 'https://identity.ic0.app/#authorize',
+      windowOpenerFeatures: 'width=480,height=600,left=400,top=100,resizable,scrollbars',
+      onSuccess: async () => {
+        const identity = authClient.getIdentity();
+        const principal = identity.getPrincipal().toText();
+        this.userPrincipal = principal;
+        this.identityProvider = 'internet-identity';
+        await this.createUserInternal();
+        await this.loadUserData();
+        this.showMessage('登录成功', 'success');
+        this.activePage = 'profile';
+        this.#render();
+      },
+      onError: (err) => {
+        this.showMessage('登录失败: ' + err.message, 'error');
+      }
+    });
+  }
 
   #render() {
     if (this.renderScheduled) return;
@@ -1534,7 +1531,9 @@ class App {
       render(html`
         <div class="nav-tabs">
           <button class="${this.activePage === 'game' ? 'active' : ''}" @click=${() => { this.activePage = 'game'; this.#render(); }}>Game</button>
-          <button class="${this.activePage === 'profile' ? 'active' : ''}" @click=${() => { this.activePage = 'profile'; this.#render(); }}>${this.isConnected ? 'Profile' : 'Login'}</button>
+          ${this.isConnected ? html`
+            <button class="${this.activePage === 'profile' ? 'active' : ''}" @click=${() => { this.activePage = 'profile'; this.#render(); }}>Profile</button>
+          ` : ''}
         </div>
         ${this.activePage === 'game' ? html`
           <section class="main-right">
@@ -1595,46 +1594,47 @@ class App {
                         <div style="font-size: 1.2rem; font-weight: bold; color: white; margin-bottom: 15px;">
                           🎯 Place Your Bet
                         </div>
-                      <button 
-                        class="btn btn-primary" 
-                        @click=${() => {
-                          if (!this.isConnected) {
-                            this.showMessage('请先登录', 'error');
-                            return;
-                          }
-                          const balanceNum = Number(this.currentUser && this.currentUser.balance);
-                          if (isNaN(balanceNum) || balanceNum < 1) {
-                            this.showMessage('余额不足，无法下注。请先充值 ckBTC。', 'error');
-                            return;
-                          }
-                          this.placeBet();
-                        }}
-                        ?disabled=${this.loading}
+                        <button 
+                          class="btn btn-primary" 
+                          @click=${() => {
+                            if (!this.isConnected) {
+                              this.showMessage('请先登录', 'error');
+                              return;
+                            }
+                            const balanceNum = Number(this.currentUser && this.currentUser.balance);
+                            if (isNaN(balanceNum) || balanceNum < 1) {
+                              this.showMessage('余额不足，无法下注。请先充值 ckBTC。', 'error');
+                              return;
+                            }
+                            this.placeBet();
+                          }}
+                          ?disabled=${this.loading}
                           style="width: 100%; margin-bottom: 15px; background: white; color: #4caf50; border: none; font-weight: bold; font-size: 1.1rem; padding: 15px; border-radius: 8px;"
-                      >
+                        >
                           ${this.loading ? '🎲 Placing Bet...' : '🎲 Place Bet (0.00000001 ckBTC)'}
-                      </button>
+                        </button>
                         <div style="background: rgba(255,255,255,0.2); padding: 10px; border-radius: 6px; margin-bottom: 10px;">
                           <div style="font-size: 1rem; color: white; font-weight: bold;">
                             💰 Remaining Bets: ${this.currentUser && this.currentUser.balance ? Math.floor(Number(this.currentUser.balance) / 1) : 0}
-                      </div>
+                          </div>
                         </div>
-                                              <div style="background: rgba(255,255,255,0.9); padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.9rem; color: #333;">
+                        <div style="background: rgba(255,255,255,0.9); padding: 15px; border-radius: 8px; margin-top: 15px; font-size: 0.9rem; color: #333;">
                           <p style="margin: 0 0 8px 0; font-weight: bold; color: #2e7d32;">💡 Betting Strategy</p>
                           <ul style="margin: 0; padding-left: 20px; font-size: 0.85rem; color: #555;">
                             <li>🎯 Multiple bets increase your winning chances</li>
                             <li>💰 Each bet costs only 0.00000001 ckBTC</li>
                             <li>🏆 More bets = higher probability to win the prize pool</li>
                             <li>⚡ Place as many bets as you can afford!</li>
-                        </ul>
-                        ${this.isConnected ? html`
+                          </ul>
+                          ${this.isConnected ? html`
                             <div style="margin-top: 10px; padding: 10px; background: #e3f2fd; border-radius: 6px; border-left: 4px solid #2196f3;">
                               <p style="margin: 0; font-size: 0.9rem; color: #1976d2; font-weight: bold;">
                                 🎲 Your bets this round: ${this.getUserBetCount()} 
-                              ${this.getUserBetCount() === 1 ? 'bet' : 'bets'}
-                            </p>
-                          </div>
-                        ` : ''}
+                                ${this.getUserBetCount() === 1 ? 'bet' : 'bets'}
+                              </p>
+                            </div>
+                          ` : ''}
+                        </div>
                       </div>
                       ${this.isAdmin ? html`
                         <button 
@@ -1647,19 +1647,11 @@ class App {
                         </button>
                         <button 
                           class="btn btn-info" 
-                          @click=${this.checkTreasuryBalance.bind(this)}
+                          @click=${this.manualTriggerRoundAutoStart.bind(this)}
                           ?disabled=${this.loading}
                           style="width: 100%; margin-top: 10px; background: #17a2b8; color: white; border: none; font-weight: bold; padding: 12px; border-radius: 8px;"
                         >
-                          ${this.loading ? '💰 Checking Treasury...' : '💰 Check Treasury Balance (Admin)'}
-                        </button>
-                        <button 
-                          class="btn btn-warning" 
-                          @click=${this.getTreasuryAccount.bind(this)}
-                          ?disabled=${this.loading}
-                          style="width: 100%; margin-top: 10px; background: #ffc107; color: #212529; border: none; font-weight: bold; padding: 12px; border-radius: 8px;"
-                        >
-                          ${this.loading ? '📋 Getting Treasury Info...' : '📋 Treasury Account Info (Admin)'}
+                          ${this.loading ? '🎲 Starting Next Round...' : '🎲 Start Next Round (Admin Only)'}
                         </button>
                       ` : html`
                         <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; text-align: center; border-left: 4px solid #ffc107;">
@@ -1670,28 +1662,40 @@ class App {
                       `}
                     </div>
                   ` : html`
-                    <div style="background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%); padding: 30px; border-radius: 12px; text-align: center; border: 2px dashed #ccc;">
-                      <div style="font-size: 2rem; margin-bottom: 15px;">🔐</div>
-                      <div style="font-size: 1.2rem; font-weight: bold; color: #666; margin-bottom: 10px;">
-                        Login Required
+                    <!-- 内嵌登录区域 -->
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 12px; text-align: center; color: white; margin-bottom: 20px;">
+                      <div style="font-size: 2.5rem; margin-bottom: 15px;">🔐</div>
+                      <div style="font-size: 1.3rem; font-weight: bold; margin-bottom: 10px;">
+                        Login to Play
                       </div>
-                      <div style="font-size: 0.9rem; color: #888;">
-                        Please login to participate in the lottery and place your bets!
+                      <div style="font-size: 1rem; margin-bottom: 20px; opacity: 0.9;">
+                        Connect your Internet Identity to start betting and winning!
                       </div>
-                      <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #ffc107; text-align: left;">
-                        <div style="font-size: 0.9rem; color: #856404; margin-bottom: 8px; font-weight: bold;">
+                      
+                      <button 
+                        class="btn btn-primary" 
+                        style="background: white; color: #667eea; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 1rem; margin-bottom: 15px; width: 100%; max-width: 300px;" 
+                        @click=${this.openIdentityPopupAndAuthorize.bind(this)} 
+                        ?disabled=${this.loading}
+                      >
+                        ${this.loading ? '🔄 Connecting...' : '🔐 Connect Internet Identity'}
+                      </button>
+                      
+                      <!-- 浏览器兼容性信息 -->
+                      <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-top: 15px; text-align: left;">
+                        <div style="font-size: 0.9rem; margin-bottom: 10px; font-weight: bold;">
                           🌐 Browser Compatibility
                         </div>
-                        <div style="font-size: 0.8rem; color: #856404; line-height: 1.4;">
+                        <div style="font-size: 0.8rem; line-height: 1.4; opacity: 0.9;">
                           ${this.isMobile ? html`
                             ${this.isChrome ? html`
                               ✅ Mobile Chrome: Fully supported
                             ` : this.isSafari ? html`
                               ⚠️ Mobile Safari: May require multiple attempts
                               <br>
-                              <span style="color: #d63384; font-weight: bold;">
+                              <span style="color: #ffd700; font-weight: bold;">
                                 🔧 Safari Alternative: 
-                                <a href="#" @click=${(e) => { e.preventDefault(); this.handleSafariManualLogin(); }} style="color: #d63384; text-decoration: underline;">
+                                <a href="#" @click=${(e) => { e.preventDefault(); this.handleSafariManualLogin(); }} style="color: #ffd700; text-decoration: underline;">
                                   Click here to login manually
                                 </a>
                               </span>
@@ -1714,10 +1718,10 @@ class App {
                             `}
                           `}
                           <br>
-                          <span style="font-size: 0.75rem; color: #856404;">
+                          <span style="font-size: 0.75rem; opacity: 0.8;">
                             💡 Tip: If login fails, try refreshing the page or using a different browser
                           </span>
-                </div>
+                        </div>
                       </div>
                     </div>
                   `}
@@ -1770,150 +1774,224 @@ class App {
                 </div>
               </div>
             ` : ''}
+            
+            ${this.historicalWinners && this.historicalWinners.length > 0 ? html`
+              <div class="historical-winners-section" style="margin-top: 30px;">
+                <h2 style="text-align: center; margin-bottom: 20px; color: #333;">🏆 Recent Winners (Last 10)</h2>
+                <div style="background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%); padding: 20px; border-radius: 12px; border: 2px solid #ffc107;">
+                  <div style="max-height: 400px; overflow-y: auto;">
+                    ${this.historicalWinners.slice().reverse().map((winner, index) => html`
+                      <div style="background: rgba(255,255,255,0.9); margin-bottom: 10px; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                          <div style="font-weight: bold; color: #e65100; font-size: 1.1rem;">
+                            🎉 Round #${winner.round_id}
+                          </div>
+                          <div style="font-size: 0.9rem; color: #666;">
+                            ${this.formatTimestamp(winner.timestamp)}
+                          </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <div style="font-family: monospace; font-size: 0.9rem; color: #333; cursor: pointer; padding: 4px 8px; border-radius: 4px; transition: background-color 0.2s;" 
+                               @click=${() => this.copyWinnerAddress(winner.winner_principal)}
+                               title="Click to copy winner address">
+                            ${this.formatPrincipal(winner.winner_principal)}
+                          </div>
+                          <div style="font-weight: bold; color: #2e7d32; font-size: 1.1rem;">
+                            ${this.formatBalance(winner.amount)}
+                          </div>
+                        </div>
+                      </div>
+                    `)}
+                  </div>
+                  <div style="text-align: center; margin-top: 15px; font-size: 0.9rem; color: #8b6914;">
+                    💡 Click on any winner to copy their address
+                  </div>
+                </div>
+              </div>
+            ` : html`
+              <div class="historical-winners-section" style="margin-top: 30px;">
+                <h2 style="text-align: center; margin-bottom: 20px; color: #333;">🏆 Recent Winners</h2>
+                <div style="background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%); padding: 40px; border-radius: 12px; text-align: center; border: 2px dashed #ccc;">
+                  <div style="font-size: 2rem; margin-bottom: 15px;">🎲</div>
+                  <div style="font-size: 1.1rem; font-weight: bold; color: #666; margin-bottom: 10px;">
+                    No Winners Yet
+                  </div>
+                  <div style="font-size: 0.9rem; color: #888;">
+                    Winners will appear here after the first lottery round ends
+                  </div>
+                </div>
+              </div>
+            `}
           </section>
         ` : html`
-          <section class="profile-section" style="max-width: 600px; margin: 0 auto; padding: 24px 0;">
-            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
-              <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
-                <h2 style="margin: 0;">👤 My Profile</h2>
-              ${this.isConnected ? html`
-                  <div class="profile-user-section" style="display: flex; align-items: center; gap: 8px;">
-                    <div style="display: flex; align-items: center; gap: 6px; background: #f8f9fa; padding: 6px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
-                      <div style="width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
-                        ${this.userPrincipal ? this.userPrincipal.substring(0, 2).toUpperCase() : 'U'}
+          ${this.activePage === 'profile' && this.isConnected ? html`
+            <section class="profile-section" style="max-width: 600px; margin: 0 auto; padding: 24px 0;">
+              <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+                <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px;">
+                  <h2 style="margin: 0;">👤 My Profile</h2>
+                  ${this.isConnected ? html`
+                    <div class="profile-user-section" style="display: flex; align-items: center; gap: 8px;">
+                      <div style="display: flex; align-items: center; gap: 6px; background: #f8f9fa; padding: 6px 10px; border-radius: 6px; border: 1px solid #e9ecef;">
+                        <div style="width: 24px; height: 24px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
+                          ${this.userPrincipal ? this.userPrincipal.substring(0, 2).toUpperCase() : 'U'}
+                        </div>
+                        <span style="font-size: 0.8rem; color: #495057; font-weight: 500;">
+                          ${this.userPrincipal ? this.formatPrincipal(this.userPrincipal) : 'User'}
+                        </span>
                       </div>
-                      <span style="font-size: 0.8rem; color: #495057; font-weight: 500;">
-                        ${this.userPrincipal ? this.formatPrincipal(this.userPrincipal) : 'User'}
-                      </span>
+                      <button 
+                        class="btn btn-danger" 
+                        style="background: #dc3545; color: white; border: none; padding: 4px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;" 
+                        @click=${this.disconnectIdentity.bind(this)} 
+                        ?disabled=${this.loading}
+                        title="Logout"
+                      >
+                        <span style="font-size:1.1em;">🚪</span> Logout
+                    </button>
                     </div>
-                    <button 
-                      class="btn btn-danger" 
-                      style="background: #dc3545; color: white; border: none; padding: 4px 12px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.95rem; display: flex; align-items: center; gap: 6px;" 
-                      @click=${this.disconnectIdentity.bind(this)} 
-                      ?disabled=${this.loading}
-                      title="Logout"
-                    >
-                      <span style="font-size:1.1em;">🚪</span> Logout
-                </button>
-                  </div>
-                ` : html`
-                  <button 
-                    class="btn btn-primary" 
-                    style="background: #007bff; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 0.9rem;" 
-                    @click=${this.connectIdentity.bind(this)} 
-                    ?disabled=${this.loading}
-                  >
-                    ${this.loading ? 'Connecting...' : '🔐 Login'}
-                  </button>
-                `}
+                  ` : html``}
+                </div>
+                <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
+                  <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Principal:</span>
+                  <span class="profile-value" style="font-family: monospace; font-size: 1.1em; margin-right: 8px;">${this.userPrincipal ? this.formatPrincipal(this.userPrincipal.toString()) : '--'}</span>
+                  <button class="btn-small copy-btn" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #f3f3f3; cursor: pointer;" @click=${() => this.copyPrincipal(this.userPrincipal)}>Copy</button>
+                </div>
+                <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
+                  <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Balance:</span>
+                  <span class="profile-balance" style="font-family: monospace; color: #38a169; font-weight: bold; font-size: 1.3em; margin-right: 8px;">${this.currentUser ? this.formatBalance(this.currentUser.balance) : '0.00000000 ckBTC'}</span>
+                  <button class="btn-small" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #e3f2fd; color: #1976d2; cursor: pointer;" @click=${this.updateBalance.bind(this)} ?disabled=${this.loading} title="Sync deposit records">${this.loading ? 'Syncing...' : '💰 Sync Deposits'}</button>
+                </div>
               </div>
-              
-              ${!this.isConnected ? html`
-                <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin-top: 15px; border-left: 4px solid #ffc107;">
-                  <div style="font-size: 0.9rem; color: #856404; margin-bottom: 8px; font-weight: bold;">
-                    🌐 Browser Compatibility
-                  </div>
-                  <div style="font-size: 0.8rem; color: #856404; line-height: 1.4;">
-                    ${this.isMobile ? html`
-                      ${this.isChrome ? html`
-                        ✅ Mobile Chrome: Fully supported
-                      ` : this.isSafari ? html`
-                        ⚠️ Mobile Safari: May require multiple attempts
-                        <br>
-                        <span style="color: #d63384; font-weight: bold;">
-                          🔧 Safari Alternative: 
-                          <a href="#" @click=${(e) => { e.preventDefault(); this.handleSafariManualLogin(); }} style="color: #d63384; text-decoration: underline;">
-                            Click here to login manually
-                          </a>
-                              </span>
-                      ` : this.isFirefox ? html`
-                        ⚠️ Mobile Firefox: May require longer timeout
-                      ` : this.isEdge ? html`
-                        ⚠️ Mobile Edge: May require longer timeout
-                      ` : html`
-                        ⚠️ Other mobile browser: Compatibility may vary
-                      `}
-                    ` : html`
-                      ${this.isChrome ? html`
-                        ✅ Desktop Chrome: Fully supported
-                      ` : this.isFirefox ? html`
-                        ✅ Desktop Firefox: Fully supported
-                      ` : this.isEdge ? html`
-                        ✅ Desktop Edge: Fully supported
-                      ` : html`
-                        ⚠️ Other desktop browser: Compatibility may vary
-                      `}
-                    `}
-                    <br>
-                    <span style="font-size: 0.75rem; color: #856404;">
-                      💡 Tip: If login fails, try refreshing the page or using a different browser
-                    </span>
-                            </div>
-                          </div>
-              ` : ''}
-              <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
-                <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Principal:</span>
-                <span class="profile-value" style="font-family: monospace; font-size: 1.1em; margin-right: 8px;">${this.userPrincipal ? this.formatPrincipal(this.userPrincipal.toString()) : '--'}</span>
-                <button class="btn-small copy-btn" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #f3f3f3; cursor: pointer;" @click=${() => this.copyPrincipal(this.userPrincipal)}>Copy</button>
-                    </div>
-              <div class="profile-info-row" style="display: flex; align-items: center; margin-bottom: 12px;">
-                <span class="profile-label" style="min-width: 110px; color: #888; font-weight: 500;">Balance:</span>
-                <span class="profile-balance" style="font-family: monospace; color: #38a169; font-weight: bold; font-size: 1.3em; margin-right: 8px;">${this.currentUser ? this.formatBalance(this.currentUser.balance) : '0.00000000 ckBTC'}</span>
-                <button class="btn-small" style="margin-left: 8px; padding: 2px 10px; font-size: 0.9em; border-radius: 6px; border: none; background: #e3f2fd; color: #1976d2; cursor: pointer;" @click=${this.updateBalance.bind(this)} ?disabled=${this.loading}>${this.loading ? 'Refreshing...' : '🔄 Refresh'}</button>
+              <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+                <h3 style="margin-bottom: 14px;">💸 Withdraw</h3>
+                <input type="number" placeholder="Amount (ckBTC)" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px;" @input=${(e) => this.withdrawAmount = e.target.value} />
+                <button class="btn btn-warning" style="width: 100%;" @click=${this.withdrawBalance.bind(this)} ?disabled=${this.loading || !this.withdrawAmount}>${this.loading ? 'Withdrawing...' : 'Withdraw'}</button>
               </div>
-
-
-              
-
-                    </div>
-
-            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
-              <h3 style="margin-bottom: 14px;">💸 Withdraw</h3>
-              <input type="number" placeholder="Amount (ckBTC)" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px;" @input=${(e) => this.withdrawAmount = e.target.value} />
-              <button class="btn btn-warning" style="width: 100%;" @click=${this.withdrawBalance.bind(this)} ?disabled=${this.loading || !this.withdrawAmount}>${this.loading ? 'Withdrawing...' : 'Withdraw'}</button>
-            </div>
-
-            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
-              <h3 style="margin-bottom: 14px;">📜 Recent Transactions</h3>
-              ${this.currentUser && this.currentUser.transaction_history && this.currentUser.transaction_history.length > 0
-                ? html`
-                  <ul class="tx-list" style="list-style: none; padding: 0; margin: 0;">
-                    ${this.currentUser.transaction_history.slice(-5).reverse().map(tx => html`
-                      <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
-                        <span class="tx-type" style="color: #888;">${tx.transaction_type}</span>
-                        <span class="tx-amount" style="color: #1976d2; font-weight: bold;">${this.formatBalance(tx.amount)}</span>
-                        <span class="tx-time" style="color: #aaa;">${this.formatTimestamp(tx.timestamp)}</span>
-                      </li>
-                    `)}
-                  </ul>
-                `
-                : html`<p style="color: #aaa;">No transactions yet.</p>`
+              <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+                <h3 style="margin-bottom: 14px;">📜 Recent Transactions</h3>
+                ${this.currentUser && this.currentUser.transaction_history && this.currentUser.transaction_history.length > 0
+                  ? html`
+                    <ul class="tx-list" style="list-style: none; padding: 0; margin: 0;">
+                      ${this.currentUser.transaction_history.slice(-5).reverse().map(tx => html`
+                        <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
+                          <span class="tx-type" style="color: #888;">${tx.transaction_type}</span>
+                          <span class="tx-amount" style="color: #1976d2; font-weight: bold;">${this.formatBalance(tx.amount)}</span>
+                          <span class="tx-time" style="color: #aaa;">${this.formatTimestamp(tx.timestamp)}</span>
+                        </li>
+                      `)}
+                    </ul>
+                  `
+                  : html`<p style="color: #aaa;">No transactions yet.</p>`
                 }
               </div>
-
-            <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
-              <h3 style="margin-bottom: 14px;">🏆 Winning History</h3>
+              <div class="profile-card" style="background: #fff; border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); padding: 24px 20px; margin-bottom: 24px;">
+                <h3 style="margin-bottom: 14px;">🏆 Winning History</h3>
                 ${this.currentUser && this.currentUser.winning_history && this.currentUser.winning_history.length > 0
                   ? html`
-                  <ul class="win-list" style="list-style: none; padding: 0; margin: 0;">
-                    ${this.currentUser.winning_history.slice(-5).reverse().map(win => html`
-                      <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
-                        <span class="win-amount" style="color: #e67e22; font-weight: bold;">${this.formatBalance(win.amount)}</span>
-                        <span class="win-time" style="color: #aaa;">${this.formatTimestamp(win.timestamp)}</span>
-                        <span class="win-round" style="color: #888;">Round ${win.round_id}</span>
-                      </li>
+                    <ul class="win-list" style="list-style: none; padding: 0; margin: 0;">
+                      ${this.currentUser.winning_history.slice(-5).reverse().map(win => html`
+                        <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.98em;">
+                          <span class="win-amount" style="color: #e67e22; font-weight: bold;">${this.formatBalance(win.amount)}</span>
+                          <span class="win-time" style="color: #aaa;">${this.formatTimestamp(win.timestamp)}</span>
+                          <span class="win-round" style="color: #888;">Round ${win.round_id}</span>
+                        </li>
                       `)}
-                  </ul>
+                    </ul>
                   `
-                : html`<p style="color: #aaa;">No winnings yet.</p>`
+                  : html`<p style="color: #aaa;">No winnings yet.</p>`
                 }
               </div>
-
-
-          </section>
+            </section>
+          ` : ''}
         `}
+        
+        <!-- Internet Identity 授权弹框 -->
+        ${this.showIdentityModal ? html`
+          <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; align-items: center; justify-content: center;">
+            <div style="background: white; border-radius: 15px; width: 90%; max-width: 600px; height: 80vh; display: flex; flex-direction: column; overflow: hidden;">
+              <!-- 弹框头部 -->
+              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 1.2rem; font-weight: bold;">🔐 Internet Identity Login</div>
+                <button 
+                  style="background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;"
+                  @click=${() => { this.showIdentityModal = false; this.#render(); }}
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              
+              <!-- iframe 容器 -->
+              <div style="flex: 1; position: relative;">
+                <div id="identity-loading" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 1;">
+                  <div style="font-size: 2rem; margin-bottom: 10px;">🔄</div>
+                  <div style="font-size: 1rem; color: #666;">Loading Internet Identity...</div>
+                </div>
+                <iframe 
+                  src="https://identity.ic0.app/#authorize"
+                  style="width: 100%; height: 100%; border: none; border-radius: 0 0 15px 15px;"
+                  title="Internet Identity Authorization"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation allow-top-navigation-by-user-activation"
+                  allow="camera; microphone; geolocation"
+                  @load=${() => {
+                    const loading = document.getElementById('identity-loading');
+                    if (loading) loading.style.display = 'none';
+                  }}
+                ></iframe>
+              </div>
+              
+              <!-- 底部说明 -->
+              <div style="background: #f8f9fa; padding: 15px; border-top: 1px solid #e9ecef; font-size: 0.9rem; color: #666; text-align: center;">
+                <div style="margin-bottom: 8px;">💡 Complete the authentication in the window above</div>
+                <div style="font-size: 0.8rem; opacity: 0.8;">
+                  After successful login, you can close this window and return to the game
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
       `, document.getElementById('app'));
     });
+  }
+
+  // 监听iframe登录状态
+  checkIdentityLoginStatus() {
+    if (this.showIdentityModal) {
+      // 每2秒检查一次登录状态
+      const checkInterval = setInterval(async () => {
+        try {
+          const status = await identityCkBtcManager.getConnectionStatus();
+          if (status.isConnected && status.principal) {
+            console.log('Identity login detected in iframe');
+            clearInterval(checkInterval);
+            
+            // 关闭弹框
+            this.showIdentityModal = false;
+            
+            // 更新用户状态
+            this.userPrincipal = status.principal;
+            this.identityProvider = status.provider;
+            
+            // 创建用户并加载数据
+            await this.createUserInternal();
+            await this.loadUserData();
+            
+            // 显示成功消息
+            this.showMessage('Internet Identity login successful!', 'success');
+            
+            // 重新渲染
+            this.#render();
+          }
+        } catch (error) {
+          console.log('Checking identity status:', error.message);
+        }
+      }, 2000);
+      
+      // 30秒后停止检查
+      setTimeout(() => {
+        clearInterval(checkInterval);
+      }, 30000);
+    }
   }
 
   // Safari 手动登录处理

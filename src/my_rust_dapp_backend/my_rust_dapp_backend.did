@@ -12,6 +12,13 @@ type Winning = record {
   round_id : nat64;
 };
 
+type HistoricalWinner = record {
+  winner_principal : text;
+  amount : nat64;
+  timestamp : nat64;
+  round_id : nat64;
+};
+
 type User = record {
   balance : nat64;
   transaction_history : vec Transaction;
@@ -112,4 +119,6 @@ service : {
   auto_consolidate_all_accounts : () -> (variant { Ok : text; Err : text });
   // Manual trigger methods
   manual_trigger_round_auto_start : () -> (variant { Ok : text; Err : text });
+  // Historical winners
+  get_historical_winners : () -> (vec HistoricalWinner) query;
 };
